@@ -1,5 +1,7 @@
 import { clampNode } from '../model/geometry';
-import { HEAD_W, LANE_H, nodeSize, uid, type Flow, type LaneKind, type NodeType } from '../model/types';
+import { colorName } from '../model/colors';
+import { parseConnect } from '../model/nlConnect';
+import { HEAD_W, LANE_H, nodeSize, uid, type EdgeKind, type Flow, type LaneKind, type NodeType } from '../model/types';
 import type { Draft } from 'immer';
 import { edit, flash, getState, setState } from './flowStore';
 
@@ -79,15 +81,53 @@ export function addNode(type: NodeType) {
   focusSoon('#p-label', true);
 }
 
-export function connect(from: string, to: string) {
+export function connect(from: string, to: string, opts: { kind?: EdgeKind; color?: string; label?: string } = {}) {
   if (from === to) return; // 同じ部品同士は繋がない
   const id = uid();
-  const kind = getState().edgeKind;
+  const kind = opts.kind ?? getState().edgeKind;
   edit((d) => {
-    d.edges.push({ id, from, to, kind, label: '' });
+    d.edges.push({ id, from, to, kind, label: opts.label ?? '', ...(opts.color ? { color: opts.color } : {}) });
   });
   setState({ connectSrc: null, sel: { kind: 'edge', id } });
-  focusSoon('#p-elabel'); // 確定直後にラベル欄へ
+  if (opts.label === undefined) focusSoon('#p-elabel'); // 確定直後にラベル欄へ
+}
+
+/** 文章でつなぐ。結果をひとことで返す */
+export function runSentence(text: string): { ok: boolean; message: string } {
+  const { flow, sel } = getState();
+  if (!flow) return { ok: false, message: '図が開かれていません。' };
+  const r = parseConnect(text, flow.nodes);
+  if (!r.ok) return { ok: false, message: r.error };
+  const { from, to, kind, color, label } = r.cmd;
+  const style = [kind && (kind === 'data' ? '点線' : '実線'), color && colorName(color), label && `ラベル「${label}」`].filter(Boolean).join('・');
+
+  if (from && to) {
+    // すでに同じ向きの矢印があれば、新しく作らずにそれを変える
+    const exist = flow.edges.find((e) => e.from === from.id && e.to === to.id);
+    if (exist) {
+      updateEdge(exist.id, { kind, color, label });
+      setState({ sel: { kind: 'edge', id: exist.id } });
+      return { ok: true, message: `「${from.label}」→「${to.label}」の線を変えました${style ? `（${style}）` : ''}。` };
+    }
+    connect(from.id, to.id, { kind, color, label: label ?? '' });
+    return { ok: true, message: `「${from.label}」→「${to.label}」を繋ぎました${style ? `（${style}）` : ''}。` };
+  }
+  // 部品の名前がなければ、選んでいる矢印を変える
+  if (sel?.kind === 'edge') {
+    updateEdge(sel.id, { kind, color, label });
+    return { ok: true, message: `選んでいる線を変えました（${style}）。` };
+  }
+  return { ok: false, message: 'つなぐ部品の名前を2つ書いてください。線の色だけ変えるときは、先に線をクリックして選んでください。' };
+}
+
+function updateEdge(id: string, p: { kind?: EdgeKind; color?: string; label?: string }) {
+  edit((d) => {
+    const e = d.edges.find((x) => x.id === id);
+    if (!e) return;
+    if (p.kind) e.kind = p.kind;
+    if (p.color) e.color = p.color;
+    if (p.label !== undefined) e.label = p.label;
+  });
 }
 
 export function deleteSel() {
