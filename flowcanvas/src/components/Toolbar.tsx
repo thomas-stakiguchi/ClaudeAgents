@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, setState, undo, useStore,
 } from '../store/flowStore';
+import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
 import { ExportModal, ImportModal } from './ExportModal';
 
@@ -19,6 +20,7 @@ export function Toolbar() {
   const confirmDel = useStore((s) => s.confirmDel);
   const [modal, setModal] = useState<'export' | 'import' | null>(null);
   const [busy, setBusy] = useState(false);
+  const [theme, setTheme] = useState<Theme>(loadTheme);
 
   const zoomBy = (f: number) => {
     const el = document.querySelector('.canvas')!.getBoundingClientRect();
@@ -103,6 +105,20 @@ export function Toolbar() {
       <button className="sm" onClick={() => setModal('export')}>テキスト書き出し</button>
       <button className="sm" onClick={() => setModal('import')}>読み込み</button>
       <button className="sm" onClick={() => void createSampleFlow()}>サンプル</button>
+      <select
+        style={{ width: 'auto' }}
+        value={theme}
+        title="画面の明るさ"
+        onChange={(e) => {
+          const t = e.target.value as Theme;
+          applyTheme(t);
+          setTheme(t);
+        }}
+      >
+        <option value="auto">表示：自動</option>
+        <option value="light">表示：ライト</option>
+        <option value="dark">表示：ダーク</option>
+      </select>
       {modal === 'export' && <ExportModal onClose={() => setModal(null)} />}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} />}
     </div>

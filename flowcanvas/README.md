@@ -36,6 +36,7 @@ npm start   # http://localhost:3001
 | 取り消し / やり直し | Ctrl+Z / Ctrl+Shift+Z |
 | 画像にする | 上の PNG / JPG / PDF |
 | 文章にする | 「テキスト書き出し」（JSON / Mermaid / Markdown表） |
+| 明るさを変える | 右上の「表示」で 自動 / ライト / ダーク（自動はPCの設定に合わせる） |
 
 ## 構成
 
