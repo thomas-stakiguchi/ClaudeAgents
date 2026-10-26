@@ -89,7 +89,26 @@ svg.edges text{font-family:var(--font);font-size:11px;fill:var(--fg);paint-order
 .legend{display:flex;gap:14px;font-size:11px;color:var(--muted);align-items:center}
 .legend i{display:inline-block;width:22px;border-top:2px solid var(--flow);vertical-align:middle;margin-right:4px}
 .legend i.d{border-top:2px dashed var(--dflow)}
-.flowsel{width:200px !important}
+.flowsel{width:170px !important}
 .toast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:6px 12px;border-radius:6px;font-size:12px;pointer-events:none;z-index:5}
 @media (max-width:900px){.main{grid-template-columns:1fr}.side{display:none}.canvas{min-height:60vh}}
 @media (prefers-reduced-motion:no-preference){.node{transition:box-shadow .12s}}
+/* 色選び（Excel 風） */
+.colorpicker{display:flex;flex-direction:column;gap:6px}
+.colorpicker .auto{align-self:flex-start}
+.cp-label{font-size:11px;color:var(--muted)}
+.swatches{display:flex;gap:3px;flex-wrap:wrap}
+.swatch{width:20px;height:20px;padding:0;border-radius:3px;border:1px solid var(--line)}
+.swatch:hover{transform:scale(1.15);border-color:var(--fg)}
+.swatch.on{outline:2px solid var(--accent);outline-offset:1px}
+.cp-more{display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer}
+.cp-more input{width:32px;height:22px;padding:0;border:1px solid var(--line);border-radius:4px;background:none;cursor:pointer}
+/* 文章でつなぐ */
+.nl textarea{min-height:56px;font-size:12px}
+.nl .msg{font-size:11px;line-height:1.5;margin:6px 0 0}
+.nl .msg.ok{color:var(--ok)}.nl .msg.ng{color:var(--danger)}
+.tools{display:flex;gap:6px;margin-bottom:8px}
+.tools button{flex:1}
+.lbl{font-size:12px;color:var(--muted);white-space:nowrap}
+details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
+.subhead{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:500;margin-bottom:6px}

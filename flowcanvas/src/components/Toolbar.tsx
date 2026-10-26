@@ -11,8 +11,6 @@ const SAVE_LABEL = { saved: '保存済', dirty: '未保存', saving: '保存中�
 export function Toolbar() {
   const flows = useStore((s) => s.flows);
   const flowId = useStore((s) => s.flow?.id);
-  const tool = useStore((s) => s.tool);
-  const edgeKind = useStore((s) => s.edgeKind);
   const k = useStore((s) => s.view.k);
   const saveState = useStore((s) => s.saveState);
   const canUndo = useStore((s) => s.past.length > 0);
@@ -61,8 +59,9 @@ export function Toolbar() {
   return (
     <div className="top">
       <div className="brand">
-        FlowCanvas<small>業務フロー兼データフロー エディタ</small>
+        FlowCanvas
       </div>
+      <span className="lbl">図：</span>
       <select className="flowsel" value={flowId ?? ''} onChange={(e) => void openFlow(e.target.value)} title="図の切替">
         {flows.map((f) => (
           <option key={f.id} value={f.id}>
@@ -70,26 +69,12 @@ export function Toolbar() {
           </option>
         ))}
       </select>
-      <button className="sm" onClick={() => void createFlow()}>新規</button>
-      <button className="sm" onClick={() => void duplicateFlow()}>複製</button>
+      <button className="sm" onClick={() => void createFlow()}>新しい図</button>
+      <button className="sm" onClick={() => void duplicateFlow()}>図を複製</button>
       <button className={`sm${confirmDel === 'flow' ? ' danger' : ''}`} onClick={onDeleteFlow}>
-        {confirmDel === 'flow' ? '本当に削除' : '削除'}
+        {confirmDel === 'flow' ? '本当に削除する' : '図を削除'}
       </button>
       <span className="sep" />
-      <button className={tool === 'select' ? 'on' : ''} title="V" onClick={() => setState({ tool: 'select', connectSrc: null })}>
-        選択・移動
-      </button>
-      <button className={tool === 'connect' ? 'on' : ''} title="C" onClick={() => setState({ tool: 'connect', connectSrc: null })}>
-        接続
-      </button>
-      <select style={{ width: 'auto' }} value={edgeKind} onChange={(e) => setState({ edgeKind: e.target.value as 'flow' | 'data' })}>
-        <option value="flow">業務の流れ（実線）</option>
-        <option value="data">データの流れ（点線）</option>
-      </select>
-      <span className="legend">
-        <span><i />業務</span>
-        <span><i className="d" />データ</span>
-      </span>
       <button className="icon" title="取り消し (Ctrl+Z)" disabled={!canUndo} onClick={undo}>↶</button>
       <button className="icon" title="やり直し (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>↷</button>
       <div className="spacer" />
@@ -99,12 +84,25 @@ export function Toolbar() {
       <button className="icon" onClick={() => zoomBy(1.2)}>＋</button>
       <button className="sm" onClick={() => canvasApi.fit()}>全体表示</button>
       <span className="sep" />
-      <button className="sm" disabled={busy} onClick={() => void onImage('png')}>PNG</button>
-      <button className="sm" disabled={busy} onClick={() => void onImage('jpg')}>JPG</button>
-      <button className="sm" disabled={busy} onClick={() => void onImage('pdf')}>PDF</button>
-      <button className="sm" onClick={() => setModal('export')}>テキスト書き出し</button>
+      <select
+        style={{ width: 'auto' }}
+        value=""
+        disabled={busy}
+        title="書き出し"
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === 'text') setModal('export');
+          else if (v) void onImage(v as 'png' | 'jpg' | 'pdf');
+        }}
+      >
+        <option value="">{busy ? '書き出し中…' : '書き出し…'}</option>
+        <option value="png">PNG</option>
+        <option value="jpg">JPG</option>
+        <option value="pdf">PDF</option>
+        <option value="text">テキスト</option>
+      </select>
       <button className="sm" onClick={() => setModal('import')}>読み込み</button>
-      <button className="sm" onClick={() => void createSampleFlow()}>サンプル</button>
+      <button className="sm" onClick={() => void createSampleFlow()}>サンプルの図</button>
       <select
         style={{ width: 'auto' }}
         value={theme}
@@ -115,9 +113,9 @@ export function Toolbar() {
           setTheme(t);
         }}
       >
-        <option value="auto">表示：自動</option>
-        <option value="light">表示：ライト</option>
-        <option value="dark">表示：ダーク</option>
+        <option value="auto">🌓 自動</option>
+        <option value="light">☀ ライト</option>
+        <option value="dark">🌙 ダーク</option>
       </select>
       {modal === 'export' && <ExportModal onClose={() => setModal(null)} />}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} />}

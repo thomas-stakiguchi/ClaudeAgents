@@ -20,11 +20,16 @@ export function toMermaid(doc: Flow) {
     });
     L.push('  end');
   });
+  let li = 0;
+  const styles: string[] = [];
   doc.edges.forEach((e) => {
     if (!nid[e.from] || !nid[e.to]) return;
     const lb = e.label ? `|${e.label.replace(/\|/g, '/')}|` : '';
     L.push(`  ${nid[e.from]} ${e.kind === 'data' ? '-.->' : '-->'}${lb} ${nid[e.to]}`);
+    if (e.color) styles.push(`  linkStyle ${li} stroke:${e.color}`);
+    li++;
   });
+  L.push(...styles);
   return L.join('\n');
 }
 

@@ -2,6 +2,7 @@ import { clampNode } from '../model/geometry';
 import type { Edge, EdgeKind, Lane, LaneKind, Node, NodeType } from '../model/types';
 import { deleteLane, deleteSel, setLaneKind } from '../store/actions';
 import { edit, useStore } from '../store/flowStore';
+import { ColorPicker } from './ColorPicker';
 
 export function SidebarRight() {
   const flow = useStore((s) => s.flow);
@@ -77,6 +78,18 @@ export function SidebarRight() {
                 <option value="flow">業務の流れ（実線）</option>
                 <option value="data">データの流れ（点線）</option>
               </select>
+            </div>
+            <div className="field">
+              <label>線の色</label>
+              <ColorPicker
+                value={e.color}
+                onChange={(c) =>
+                  set((d) => {
+                    if (c) d.color = c;
+                    else delete d.color;
+                  })
+                }
+              />
             </div>
             <div className="field">
               <label htmlFor="p-elabel">ラベル（条件・受け渡す内容）</label>

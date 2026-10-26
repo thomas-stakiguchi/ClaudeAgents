@@ -12,7 +12,7 @@ export type Node = {
   label: string;
   note?: string;
 };
-export type Edge = { id: string; from: string; to: string; kind: EdgeKind; label?: string };
+export type Edge = { id: string; from: string; to: string; kind: EdgeKind; label?: string; color?: string /* 未設定なら種類ごとの既定色 */ };
 export type Flow = { id: string; title: string; lanes: Lane[]; nodes: Node[]; edges: Edge[]; updatedAt: string };
 export type FlowSummary = Pick<Flow, 'id' | 'title' | 'updatedAt'>;
 
