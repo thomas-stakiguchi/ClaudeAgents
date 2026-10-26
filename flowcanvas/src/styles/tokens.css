@@ -1,0 +1,22 @@
+/* モックの :root をそのまま移植 */
+:root{
+  --bg:#f5f4ef; --panel:#fffdf8; --fg:#1d2126; --muted:#6b7078; --line:#d9d6cc;
+  --accent:#2f6fde; --accent-soft:#e3ecfb;
+  --lane-actor:#faf8f2; --lane-sys:#eef3f8; --lane-head:#efece3; --lane-head-sys:#dfe8f1;
+  --node:#ffffff; --node-line:#9aa0a8; --data:#eaf4ff; --data-line:#4d8fd6;
+  --flow:#343a42; --dflow:#2f6fde; --danger:#c8423a; --ok:#2e9a5a;
+  --font:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#9299a3; --line:#2f353d;
+  --accent:#6b9cf0; --accent-soft:#223253;
+  --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
+  --node:#262b32; --node-line:#5a626d; --data:#1f2d3f; --data-line:#6b9cf0;
+  --flow:#d4d8de; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#9299a3; --line:#2f353d;
+  --accent:#6b9cf0; --accent-soft:#223253;
+  --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
+  --node:#262b32; --node-line:#5a626d; --data:#1f2d3f; --data-line:#6b9cf0;
+  --flow:#d4d8de; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}

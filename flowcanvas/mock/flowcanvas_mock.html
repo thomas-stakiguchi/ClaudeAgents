@@ -1,0 +1,549 @@
+<title>FlowCanvas</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 3 columns — 左: 定義(Actor/System/部品), 中: スイムレーンキャンバス, 右: プロパティ */
+:root{
+  --bg:#f5f4ef; --panel:#fffdf8; --fg:#1d2126; --muted:#6b7078; --line:#d9d6cc;
+  --accent:#2f6fde; --accent-soft:#e3ecfb;
+  --lane-actor:#faf8f2; --lane-sys:#eef3f8; --lane-head:#efece3; --lane-head-sys:#dfe8f1;
+  --node:#ffffff; --node-line:#9aa0a8; --data:#eaf4ff; --data-line:#4d8fd6;
+  --flow:#343a42; --dflow:#2f6fde; --danger:#c8423a; --ok:#2e9a5a;
+  --font:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#9299a3; --line:#2f353d;
+  --accent:#6b9cf0; --accent-soft:#223253;
+  --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
+  --node:#262b32; --node-line:#5a626d; --data:#1f2d3f; --data-line:#6b9cf0;
+  --flow:#d4d8de; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#9299a3; --line:#2f353d;
+  --accent:#6b9cf0; --accent-soft:#223253;
+  --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
+  --node:#262b32; --node-line:#5a626d; --data:#1f2d3f; --data-line:#6b9cf0;
+  --flow:#d4d8de; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:13px;display:flex;flex-direction:column;overflow:hidden}
+*{box-sizing:border-box}
+button,select,input,textarea{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+button.sm{padding:2px 7px;font-size:12px}
+button.icon{padding:2px 6px;line-height:1}
+input[type=text],textarea,select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%}
+textarea{resize:vertical;min-height:60px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.top{display:flex;align-items:center;gap:8px;padding-block:8px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.brand{font-weight:700;font-size:15px;letter-spacing:.02em;margin-right:8px}
+.brand small{font-weight:400;color:var(--muted);margin-left:6px;font-size:12px}
+.spacer{flex:1}
+.main{flex:1;display:grid;grid-template-columns:240px 1fr 260px;min-height:0}
+.side{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.side.right{border-right:0;border-left:1px solid var(--line)}
+h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;justify-content:space-between}
+.list{display:flex;flex-direction:column;gap:4px}
+.row{display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.row.sel{border-color:var(--accent);background:var(--accent-soft)}
+.row .sw{width:10px;height:10px;border-radius:3px;flex:none}
+.row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.row .ops{display:flex;gap:2px}
+.palette{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pal{border:1px dashed var(--line);border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;background:var(--bg)}
+.pal:hover{border-color:var(--accent);color:var(--accent)}
+.pal b{display:block;font-size:12px}
+.pal span{font-size:11px;color:var(--muted)}
+.hint{font-size:11px;color:var(--muted);line-height:1.5}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field label{font-size:11px;color:var(--muted)}
+.canvas{position:relative;overflow:hidden;background:var(--bg);cursor:grab;touch-action:none;min-width:0}
+.canvas.connect{cursor:crosshair}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.lane{position:absolute;left:0;display:flex}
+.lane .head{width:120px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;padding:8px 10px;font-weight:700;gap:2px;cursor:pointer}
+.lane .head small{font-weight:400;color:var(--muted);font-size:10px;letter-spacing:.06em}
+.lane.actor{background:var(--lane-actor)}.lane.actor .head{background:var(--lane-head)}
+.lane.system{background:var(--lane-sys)}.lane.system .head{background:var(--lane-head-sys)}
+.lane.sel .head{box-shadow:inset 3px 0 0 var(--accent)}
+.lane .body{flex:1;border-bottom:1px solid var(--line);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:20px 20px}
+.divider{position:absolute;left:0;height:0;border-top:2px dashed var(--data-line)}
+.divider span{position:absolute;left:124px;top:-9px;font-size:10px;letter-spacing:.1em;color:var(--data-line);background:var(--bg);padding:0 6px;font-family:var(--mono)}
+svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+svg.edges path.hit{stroke:transparent;stroke-width:14;fill:none;pointer-events:stroke;cursor:pointer}
+svg.edges path.line{fill:none;stroke-width:1.8;pointer-events:none}
+svg.edges path.line.flow{stroke:var(--flow)}
+svg.edges path.line.data{stroke:var(--dflow);stroke-dasharray:6 4}
+svg.edges path.line.sel{stroke:var(--accent);stroke-width:3}
+svg.edges text{font-family:var(--font);font-size:11px;fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:4px;pointer-events:none}
+.node{position:absolute;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px 10px;background:var(--node);border:1.5px solid var(--node-line);border-radius:6px;cursor:move;user-select:none;line-height:1.3;font-size:12px;word-break:break-word}
+.node.task{width:150px;height:56px}
+.node.decision{width:130px;height:74px;border-radius:0;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border:0;background:var(--node-line);padding:0}
+.node.decision::before{content:"";position:absolute;inset:1.5px;background:var(--node);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);z-index:0}
+.node.decision span{position:relative;z-index:1;padding:0 18px;font-size:11px}
+.node.start,.node.end{width:48px;height:48px;border-radius:50%;font-size:10px}
+.node.end{border-width:3px}
+.node.data{width:140px;height:52px;background:var(--data);border-color:var(--data-line);border-radius:4px 4px 12px 12px;font-family:var(--mono);font-size:11px}
+.node.data::after{content:"";position:absolute;left:0;right:0;top:-1px;height:8px;border-bottom:1.5px solid var(--data-line);border-radius:0 0 50% 50%}
+.node.sel{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 1.5px var(--accent)}
+.node.decision.sel{background:var(--accent);box-shadow:none}
+.node.src{box-shadow:0 0 0 3px var(--ok)}
+.status{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px}
+.kv dt{color:var(--muted)}.kv dd{margin:0;font-family:var(--mono)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;width:min(640px,92vw);max-height:80vh;display:flex;flex-direction:column;gap:10px}
+.modal textarea{min-height:300px;font-family:var(--mono);font-size:11px}
+.legend{display:flex;gap:14px;font-size:11px;color:var(--muted);align-items:center}
+.legend i{display:inline-block;width:22px;border-top:2px solid var(--flow);vertical-align:middle;margin-right:4px}
+.legend i.d{border-top:2px dashed var(--dflow)}
+@media (max-width:900px){.main{grid-template-columns:1fr}.side{display:none}.canvas{min-height:60vh}}
+@media (prefers-reduced-motion:no-preference){.node{transition:box-shadow .12s}}
+</style>
+
+<div class="top">
+  <div class="brand">FlowCanvas<small>業務フロー兼データフロー エディタ</small></div>
+  <button id="toolSelect" class="on" title="V">選択・移動</button>
+  <button id="toolConnect" title="C">接続</button>
+  <select id="edgeKind" style="width:auto">
+    <option value="flow">業務の流れ（実線）</option>
+    <option value="data">データの流れ（点線）</option>
+  </select>
+  <span class="legend"><span><i></i>業務</span><span><i class="d"></i>データ</span></span>
+  <div class="spacer"></div>
+  <span class="status" id="status">v1 / 未保存</span>
+  <button id="zoomOut" class="icon">−</button><span class="status" id="zoomLbl">100%</span><button id="zoomIn" class="icon">＋</button>
+  <button id="fit" class="sm">全体表示</button>
+  <button id="exportBtn" class="sm">書き出し</button>
+  <button id="importBtn" class="sm">読み込み</button>
+  <button id="sampleBtn" class="sm">サンプル</button>
+</div>
+
+<div class="main">
+  <aside class="side">
+    <section>
+      <h3>Actor（担当）<button class="sm" id="addActor">＋ 追加</button></h3>
+      <div class="list" id="actorList"></div>
+    </section>
+    <section>
+      <h3>関連システム<button class="sm" id="addSystem">＋ 追加</button></h3>
+      <div class="list" id="systemList"></div>
+    </section>
+    <section>
+      <h3>部品を置く</h3>
+      <div class="palette">
+        <div class="pal" data-type="start"><b>● 開始</b><span>フローの起点</span></div>
+        <div class="pal" data-type="end"><b>◉ 終了</b><span>フローの終点</span></div>
+        <div class="pal" data-type="task"><b>▭ 作業</b><span>担当者がやること</span></div>
+        <div class="pal" data-type="decision"><b>◇ 判断</b><span>分岐・承認</span></div>
+        <div class="pal" data-type="data" style="grid-column:1/-1"><b>⌸ データ</b><span>システム内のレコード・ファイル</span></div>
+      </div>
+      <p class="hint" style="margin:8px 0 0">クリックすると選択中のレーンに置かれます。ドラッグで別レーンへ移動できます。</p>
+    </section>
+    <section>
+      <h3>操作</h3>
+      <p class="hint">
+        接続：ツールを「接続」にして 元 → 先 の順にクリック<br>
+        ダブルクリック：名前を編集<br>
+        Delete：選択中を削除　／　Esc：接続をやめる<br>
+        ホイール：上下移動　Ctrl+ホイール：拡大縮小<br>
+        背景ドラッグ：画面を動かす
+      </p>
+    </section>
+  </aside>
+
+  <div class="canvas" id="canvas">
+    <div class="world" id="world">
+      <div id="lanes"></div>
+      <svg class="edges" id="edges"></svg>
+      <div id="nodes"></div>
+    </div>
+  </div>
+
+  <aside class="side right" id="props"></aside>
+</div>
+
+<script>
+(() => {
+const LANE_H = 150, HEAD_W = 120, WORLD_W = 2600;
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+let doc = sample();
+let view = { x: 20, y: 20, k: 1 };
+let tool = 'select';
+let sel = null;          // {kind:'node'|'edge'|'lane', id}
+let connectSrc = null;
+let dirty = false;
+
+try { const s = localStorage.getItem('flowcanvas.doc'); if (s) doc = JSON.parse(s); } catch (e) {}
+
+/* ---------- サンプル ---------- */
+function sample(){
+  const A=['営業','営業事務','経理'].map(n=>({id:uid(),name:n,kind:'actor'}));
+  const S=['Salesforce','会計システム'].map(n=>({id:uid(),name:n,kind:'system'}));
+  const [a1,a2,a3]=A,[s1,s2]=S;
+  const N=(type,lane,x,ly,label)=>({id:uid(),type,lane:lane.id,x,ly,label});
+  const n={
+    st:N('start',a1,160,51,'開始'),
+    quote:N('task',a1,260,47,'見積を作成する'),
+    send:N('task',a1,460,47,'見積を顧客に送付'),
+    chk:N('decision',a2,420,38,'金額100万円以上？'),
+    appr:N('task',a2,620,47,'部長承認を取る'),
+    order:N('task',a2,820,47,'受注を登録する'),
+    inv:N('task',a3,1040,47,'請求書を発行する'),
+    en:N('end',a3,1240,51,'終了'),
+    opp:N('data',s1,270,49,'商談'),
+    ord:N('data',s1,830,49,'受注'),
+    jnl:N('data',s2,1050,49,'売上仕訳'),
+  };
+  const E=(f,t,kind,label='')=>({id:uid(),from:n[f].id,to:n[t].id,kind,label});
+  return {
+    title:'受注〜請求 業務フロー',
+    lanes:[...A,...S],
+    nodes:Object.values(n),
+    edges:[
+      E('st','quote','flow'),E('quote','send','flow'),E('send','chk','flow'),
+      E('chk','appr','flow','Yes'),E('chk','order','flow','No'),E('appr','order','flow'),
+      E('order','inv','flow'),E('inv','en','flow'),
+      E('quote','opp','data','見積金額を登録'),E('order','ord','data','受注レコード作成'),
+      E('ord','jnl','data','日次連携'),E('jnl','inv','data','請求データ参照'),
+    ]
+  };
+}
+
+/* ---------- 位置ヘルパ ---------- */
+const laneIndex = id => doc.lanes.findIndex(l=>l.id===id);
+const laneTop = id => laneIndex(id)*LANE_H;
+const laneOf = id => doc.lanes.find(l=>l.id===id);
+const nodeSize = t => t==='task'?[150,56]:t==='decision'?[130,74]:t==='data'?[140,52]:[48,48];
+const nodeRect = n => { const [w,h]=nodeSize(n.type); return {x:n.x,y:laneTop(n.lane)+n.ly,w,h,cx:n.x+w/2,cy:laneTop(n.lane)+n.ly+h/2}; };
+const nodeById = id => doc.nodes.find(n=>n.id===id);
+const firstSystemIdx = () => { const i=doc.lanes.findIndex(l=>l.kind==='system'); return i<0?doc.lanes.length:i; };
+
+/* ---------- 描画 ---------- */
+const $ = s => document.querySelector(s);
+const world=$('#world'), lanesEl=$('#lanes'), nodesEl=$('#nodes'), edgesEl=$('#edges'), canvas=$('#canvas');
+
+function render(){
+  // lanes
+  lanesEl.innerHTML='';
+  doc.lanes.forEach((l,i)=>{
+    const d=document.createElement('div');
+    d.className=`lane ${l.kind}${sel&&sel.kind==='lane'&&sel.id===l.id?' sel':''}`;
+    d.style.top=i*LANE_H+'px'; d.style.width=WORLD_W+'px'; d.style.height=LANE_H+'px';
+    d.innerHTML=`<div class="head" data-lane="${l.id}"><small>${l.kind==='actor'?'ACTOR':'SYSTEM'}</small><div></div></div><div class="body"></div>`;
+    d.querySelector('.head div').textContent=l.name;
+    lanesEl.appendChild(d);
+  });
+  const si=firstSystemIdx();
+  if(si>0&&si<doc.lanes.length){
+    const dv=document.createElement('div'); dv.className='divider';
+    dv.style.top=si*LANE_H+'px'; dv.style.width=WORLD_W+'px';
+    dv.innerHTML='<span>DATA LAYER</span>'; lanesEl.appendChild(dv);
+  }
+  // nodes
+  nodesEl.innerHTML='';
+  doc.nodes.forEach(n=>{
+    const r=nodeRect(n);
+    const d=document.createElement('div');
+    d.className=`node ${n.type}${sel&&sel.kind==='node'&&sel.id===n.id?' sel':''}${connectSrc===n.id?' src':''}`;
+    d.style.left=r.x+'px'; d.style.top=r.y+'px'; d.dataset.id=n.id;
+    const s=document.createElement('span'); s.textContent=n.label; d.appendChild(s);
+    nodesEl.appendChild(d);
+  });
+  // edges
+  const H=doc.lanes.length*LANE_H;
+  edgesEl.setAttribute('width',WORLD_W); edgesEl.setAttribute('height',H);
+  edgesEl.innerHTML=`<defs>
+    <marker id="arF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--flow)"/></marker>
+    <marker id="arD" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--dflow)"/></marker>
+    <marker id="arS" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>`;
+  doc.edges.forEach(e=>{
+    const a=nodeById(e.from), b=nodeById(e.to); if(!a||!b) return;
+    const {d,mx,my}=edgePath(nodeRect(a),nodeRect(b));
+    const isSel=sel&&sel.kind==='edge'&&sel.id===e.id;
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.innerHTML=`<path class="hit" d="${d}" data-id="${e.id}"/><path class="line ${e.kind}${isSel?' sel':''}" d="${d}" marker-end="url(#${isSel?'arS':e.kind==='flow'?'arF':'arD'})"/>`;
+    if(e.label){ const t=document.createElementNS('http://www.w3.org/2000/svg','text'); t.setAttribute('x',mx); t.setAttribute('y',my-6); t.setAttribute('text-anchor','middle'); t.textContent=e.label; g.appendChild(t); }
+    edgesEl.appendChild(g);
+  });
+  world.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.k})`;
+  $('#zoomLbl').textContent=Math.round(view.k*100)+'%';
+  $('#status').textContent=(doc.title||'無題')+(dirty?' / 未保存':' / 保存済');
+  renderLists(); renderProps();
+}
+
+function edgePath(a,b){
+  // 横方向が主なら左右ポート、縦方向が主なら上下ポート
+  const dx=b.cx-a.cx, dy=b.cy-a.cy;
+  let p1,p2,c1,c2;
+  if(Math.abs(dx)>Math.abs(dy)*0.8 && Math.abs(dx)>a.w/2+b.w/2+20){
+    const s=dx>0?1:-1;
+    p1=[a.cx+s*a.w/2,a.cy]; p2=[b.cx-s*b.w/2,b.cy];
+    const o=Math.max(40,Math.abs(dx)/2);
+    c1=[p1[0]+s*o,p1[1]]; c2=[p2[0]-s*o,p2[1]];
+  }else{
+    const s=dy>0?1:-1;
+    p1=[a.cx,a.cy+s*a.h/2]; p2=[b.cx,b.cy-s*b.h/2];
+    const o=Math.max(30,Math.abs(dy)/2);
+    c1=[p1[0],p1[1]+s*o]; c2=[p2[0],p2[1]-s*o];
+  }
+  const mx=(p1[0]+3*c1[0]+3*c2[0]+p2[0])/8, my=(p1[1]+3*c1[1]+3*c2[1]+p2[1])/8;
+  return {d:`M${p1[0]} ${p1[1]}C${c1[0]} ${c1[1]},${c2[0]} ${c2[1]},${p2[0]} ${p2[1]}`,mx,my};
+}
+
+function renderLists(){
+  const mk=(kind,el)=>{
+    el.innerHTML='';
+    const ls=doc.lanes.filter(l=>l.kind===kind);
+    if(!ls.length){ el.innerHTML='<p class="hint">まだありません。「＋ 追加」で枠を作ります。</p>'; return; }
+    ls.forEach(l=>{
+      const r=document.createElement('div');
+      r.className='row'+(sel&&sel.kind==='lane'&&sel.id===l.id?' sel':'');
+      r.innerHTML=`<span class="sw" style="background:${kind==='actor'?'var(--node-line)':'var(--data-line)'}"></span><span class="nm"></span>
+        <span class="ops"><button class="icon sm" data-act="up" title="上へ">↑</button><button class="icon sm" data-act="down" title="下へ">↓</button><button class="icon sm" data-act="del" title="削除">×</button></span>`;
+      r.querySelector('.nm').textContent=l.name;
+      r.querySelector('.nm').onclick=()=>{ sel={kind:'lane',id:l.id}; render(); };
+      r.querySelector('.nm').ondblclick=()=>{ sel={kind:'lane',id:l.id}; render(); const i=$('#p-lane-name'); if(i){i.focus();i.select();} };
+      r.querySelectorAll('button').forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); laneOp(l.id,b.dataset.act); });
+      el.appendChild(r);
+    });
+  };
+  mk('actor',$('#actorList')); mk('system',$('#systemList'));
+}
+
+function renderProps(){
+  const p=$('#props');
+  if(!sel){
+    p.innerHTML=`<section><h3>プロパティ</h3><p class="hint">部品・矢印・レーンをクリックすると、ここで編集できます。</p></section>
+    <section><h3>この図</h3><div class="field"><label>タイトル</label><input type="text" id="p-title"></div>
+    <dl class="kv"><dt>Actor</dt><dd>${doc.lanes.filter(l=>l.kind==='actor').length}</dd><dt>システム</dt><dd>${doc.lanes.filter(l=>l.kind==='system').length}</dd><dt>部品</dt><dd>${doc.nodes.length}</dd><dt>業務の矢印</dt><dd>${doc.edges.filter(e=>e.kind==='flow').length}</dd><dt>データの矢印</dt><dd>${doc.edges.filter(e=>e.kind==='data').length}</dd></dl></section>`;
+    const t=$('#p-title'); t.value=doc.title||''; t.oninput=()=>{doc.title=t.value;touch(false);};
+    return;
+  }
+  if(sel.kind==='node'){
+    const n=nodeById(sel.id); if(!n){sel=null;return renderProps();}
+    p.innerHTML=`<section><h3>部品</h3>
+      <div class="field"><label>名前</label><textarea id="p-label"></textarea></div>
+      <div class="field"><label>種類</label><select id="p-type">
+        <option value="start">開始</option><option value="end">終了</option><option value="task">作業</option><option value="decision">判断</option><option value="data">データ</option></select></div>
+      <div class="field"><label>レーン</label><select id="p-lane">${doc.lanes.map(l=>`<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>メモ（図には出ません）</label><textarea id="p-note"></textarea></div>
+      <button id="p-del" style="color:var(--danger)">この部品を削除</button></section>`;
+    $('#p-label').value=n.label; $('#p-type').value=n.type; $('#p-lane').value=n.lane; $('#p-note').value=n.note||'';
+    $('#p-label').oninput=e=>{n.label=e.target.value;touch();};
+    $('#p-type').onchange=e=>{n.type=e.target.value;clampNode(n);touch();};
+    $('#p-lane').onchange=e=>{n.lane=e.target.value;clampNode(n);touch();};
+    $('#p-note').oninput=e=>{n.note=e.target.value;touch(false);};
+    $('#p-del').onclick=()=>{deleteSel();};
+  }else if(sel.kind==='edge'){
+    const e=doc.edges.find(x=>x.id===sel.id); if(!e){sel=null;return renderProps();}
+    const a=nodeById(e.from),b=nodeById(e.to);
+    p.innerHTML=`<section><h3>矢印</h3>
+      <dl class="kv" style="margin-bottom:10px"><dt>元</dt><dd>${esc(a?a.label:'?')}</dd><dt>先</dt><dd>${esc(b?b.label:'?')}</dd></dl>
+      <div class="field"><label>種類</label><select id="p-kind"><option value="flow">業務の流れ（実線）</option><option value="data">データの流れ（点線）</option></select></div>
+      <div class="field"><label>ラベル（条件・受け渡す内容）</label><input type="text" id="p-elabel"></div>
+      <button id="p-rev" class="sm">向きを反転</button>
+      <button id="p-del" style="color:var(--danger);margin-left:6px" class="sm">削除</button></section>`;
+    $('#p-kind').value=e.kind; $('#p-elabel').value=e.label||'';
+    $('#p-kind').onchange=ev=>{e.kind=ev.target.value;touch();};
+    $('#p-elabel').oninput=ev=>{e.label=ev.target.value;touch();};
+    $('#p-rev').onclick=()=>{[e.from,e.to]=[e.to,e.from];touch();};
+    $('#p-del').onclick=()=>{deleteSel();};
+  }else if(sel.kind==='lane'){
+    const l=laneOf(sel.id); if(!l){sel=null;return renderProps();}
+    const cnt=doc.nodes.filter(n=>n.lane===l.id).length;
+    p.innerHTML=`<section><h3>${l.kind==='actor'?'Actor':'システム'}</h3>
+      <div class="field"><label>名前</label><input type="text" id="p-lane-name"></div>
+      <div class="field"><label>区分</label><select id="p-lane-kind"><option value="actor">Actor（担当・部署）</option><option value="system">関連システム</option></select></div>
+      <div class="field"><label>説明</label><textarea id="p-lane-desc"></textarea></div>
+      <p class="hint">このレーンの部品：${cnt} 個</p>
+      <button id="p-del" style="color:var(--danger)">レーンを削除</button></section>`;
+    $('#p-lane-name').value=l.name; $('#p-lane-kind').value=l.kind; $('#p-lane-desc').value=l.desc||'';
+    $('#p-lane-name').oninput=e=>{l.name=e.target.value;touch();};
+    $('#p-lane-kind').onchange=e=>{l.kind=e.target.value;sortLanes();touch();};
+    $('#p-lane-desc').oninput=e=>{l.desc=e.target.value;touch(false);};
+    $('#p-del').onclick=()=>laneOp(l.id,'del');
+  }
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function touch(re=true){ dirty=true; save(); if(re) render(); else $('#status').textContent=(doc.title||'無題')+' / 保存済'; }
+function save(){ try{ localStorage.setItem('flowcanvas.doc',JSON.stringify(doc)); dirty=false; }catch(e){} }
+function sortLanes(){ doc.lanes.sort((a,b)=>(a.kind==='system')-(b.kind==='system')); }
+function clampNode(n){ const [w,h]=nodeSize(n.type); n.ly=Math.max(8,Math.min(LANE_H-h-8,n.ly)); n.x=Math.max(HEAD_W+10,n.x); }
+
+/* ---------- レーン操作 ---------- */
+function laneOp(id,act){
+  const i=laneIndex(id); const l=doc.lanes[i];
+  if(act==='del'){
+    const cnt=doc.nodes.filter(n=>n.lane===id).length;
+    if(cnt){ // 部品が残っているときは確認を挟む
+      if(!l._confirm){ l._confirm=true; render(); const p=$('#props'); p.insertAdjacentHTML('beforeend',`<p class="hint" style="color:var(--danger)">部品が ${cnt} 個あります。もう一度「レーンを削除」を押すと部品ごと消えます。</p>`); return; }
+    }
+    doc.nodes=doc.nodes.filter(n=>n.lane!==id);
+    doc.edges=doc.edges.filter(e=>nodeById(e.from)&&nodeById(e.to));
+    doc.lanes.splice(i,1); if(sel&&sel.kind==='lane'&&sel.id===id) sel=null; touch(); return;
+  }
+  const j=act==='up'?i-1:i+1;
+  if(j<0||j>=doc.lanes.length||doc.lanes[j].kind!==l.kind) return;
+  [doc.lanes[i],doc.lanes[j]]=[doc.lanes[j],doc.lanes[i]]; touch();
+}
+function addLane(kind){
+  const l={id:uid(),kind,name:kind==='actor'?'新しい担当':'新しいシステム'};
+  doc.lanes.push(l); sortLanes(); sel={kind:'lane',id:l.id}; touch();
+  const i=$('#p-lane-name'); if(i){i.focus();i.select();}
+}
+$('#addActor').onclick=()=>addLane('actor'); $('#addSystem').onclick=()=>addLane('system');
+
+/* ---------- 部品追加 ---------- */
+document.querySelectorAll('.pal').forEach(p=>p.onclick=()=>{
+  const type=p.dataset.type;
+  let laneId = sel&&sel.kind==='lane'?sel.id : sel&&sel.kind==='node'?nodeById(sel.id).lane : null;
+  if(!laneId){ const pref=doc.lanes.find(l=>l.kind===(type==='data'?'system':'actor'))||doc.lanes[0]; if(!pref){ flash('先にActorかシステムを追加してください'); return; } laneId=pref.id; }
+  const [w,h]=nodeSize(type);
+  const cnt=doc.nodes.filter(n=>n.lane===laneId).length;
+  const n={id:uid(),type,lane:laneId,x:HEAD_W+40+cnt*60,ly:(LANE_H-h)/2,label:{start:'開始',end:'終了',task:'作業',decision:'判断？',data:'データ'}[type]};
+  doc.nodes.push(n); sel={kind:'node',id:n.id}; touch();
+  const t=$('#p-label'); if(t){t.focus();t.select();}
+});
+function flash(msg){ const s=$('#status'); s.textContent=msg; setTimeout(render,1800); }
+
+/* ---------- ツール ---------- */
+function setTool(t){ tool=t; connectSrc=null; $('#toolSelect').classList.toggle('on',t==='select'); $('#toolConnect').classList.toggle('on',t==='connect'); canvas.classList.toggle('connect',t==='connect'); render(); }
+$('#toolSelect').onclick=()=>setTool('select'); $('#toolConnect').onclick=()=>setTool('connect');
+
+/* ---------- キャンバス操作 ---------- */
+let drag=null;
+const toWorld=(cx,cy)=>{ const r=canvas.getBoundingClientRect(); return [(cx-r.left-view.x)/view.k,(cy-r.top-view.y)/view.k]; };
+
+canvas.addEventListener('pointerdown',ev=>{
+  const nodeEl=ev.target.closest('.node');
+  const hit=ev.target.closest('path.hit');
+  const head=ev.target.closest('.lane .head');
+  if(nodeEl){
+    const id=nodeEl.dataset.id;
+    if(tool==='connect'){
+      if(!connectSrc){ connectSrc=id; render(); }
+      else if(connectSrc!==id){
+        const e={id:uid(),from:connectSrc,to:id,kind:$('#edgeKind').value,label:''};
+        doc.edges.push(e); connectSrc=null; sel={kind:'edge',id:e.id}; touch();
+        const i=$('#p-elabel'); if(i) i.focus();
+      }
+      return;
+    }
+    const n=nodeById(id); const [wx,wy]=toWorld(ev.clientX,ev.clientY);
+    drag={type:'node',n,ox:wx-n.x,oy:wy-(laneTop(n.lane)+n.ly),moved:false};
+    sel={kind:'node',id}; render(); canvas.setPointerCapture(ev.pointerId); return;
+  }
+  if(hit){ sel={kind:'edge',id:hit.dataset.id}; render(); return; }
+  if(head){ sel={kind:'lane',id:head.dataset.lane}; render(); return; }
+  drag={type:'pan',sx:ev.clientX,sy:ev.clientY,vx:view.x,vy:view.y,moved:false};
+  canvas.setPointerCapture(ev.pointerId);
+});
+canvas.addEventListener('pointermove',ev=>{
+  if(!drag) return;
+  if(drag.type==='pan'){ view.x=drag.vx+ev.clientX-drag.sx; view.y=drag.vy+ev.clientY-drag.sy; drag.moved=true; world.style.transform=`translate(${view.x}px,${view.y}px) scale(${view.k})`; return; }
+  const [wx,wy]=toWorld(ev.clientX,ev.clientY); const n=drag.n;
+  n.x=Math.round((wx-drag.ox)/10)*10;
+  const absY=wy-drag.oy; const li=Math.max(0,Math.min(doc.lanes.length-1,Math.floor((absY+nodeSize(n.type)[1]/2)/LANE_H)));
+  n.lane=doc.lanes[li].id; n.ly=Math.round((absY-li*LANE_H)/10)*10; clampNode(n); drag.moved=true; render();
+});
+canvas.addEventListener('pointerup',ev=>{
+  if(drag&&drag.type==='pan'&&!drag.moved){ sel=null; if(tool==='connect') connectSrc=null; render(); }
+  if(drag&&drag.type==='node'&&drag.moved) touch();
+  drag=null;
+});
+canvas.addEventListener('dblclick',ev=>{
+  const nodeEl=ev.target.closest('.node'); const head=ev.target.closest('.lane .head');
+  if(nodeEl){ sel={kind:'node',id:nodeEl.dataset.id}; render(); const t=$('#p-label'); if(t){t.focus();t.select();} }
+  else if(head){ sel={kind:'lane',id:head.dataset.lane}; render(); const t=$('#p-lane-name'); if(t){t.focus();t.select();} }
+});
+canvas.addEventListener('wheel',ev=>{
+  ev.preventDefault();
+  if(ev.ctrlKey||ev.metaKey){
+    const r=canvas.getBoundingClientRect(); const px=ev.clientX-r.left, py=ev.clientY-r.top;
+    const k=Math.min(2.5,Math.max(.25,view.k*(ev.deltaY<0?1.1:.9)));
+    view.x=px-(px-view.x)*k/view.k; view.y=py-(py-view.y)*k/view.k; view.k=k;
+  }else{ view.x-=ev.deltaX; view.y-=ev.deltaY; }
+  render();
+},{passive:false});
+function zoomBy(f){ const r=canvas.getBoundingClientRect(); const px=r.width/2,py=r.height/2; const k=Math.min(2.5,Math.max(.25,view.k*f)); view.x=px-(px-view.x)*k/view.k; view.y=py-(py-view.y)*k/view.k; view.k=k; render(); }
+$('#zoomIn').onclick=()=>zoomBy(1.2); $('#zoomOut').onclick=()=>zoomBy(1/1.2);
+$('#fit').onclick=fit;
+function fit(){
+  const r=canvas.getBoundingClientRect();
+  let maxX=HEAD_W+300; doc.nodes.forEach(n=>{maxX=Math.max(maxX,nodeRect(n).x+nodeRect(n).w);});
+  const W=maxX+40, H=Math.max(1,doc.lanes.length)*LANE_H;
+  view.k=Math.min(2,Math.max(.25,Math.min((r.width-40)/W,(r.height-40)/H))); view.x=20; view.y=20; render();
+}
+
+document.addEventListener('keydown',ev=>{
+  const inField=/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if(ev.key==='Escape'){ connectSrc=null; if(inField) document.activeElement.blur(); else sel=null; render(); return; }
+  if(inField) return;
+  if(ev.key==='Delete'||ev.key==='Backspace'){ deleteSel(); }
+  if(ev.key==='v'||ev.key==='V') setTool('select');
+  if(ev.key==='c'||ev.key==='C') setTool('connect');
+});
+function deleteSel(){
+  if(!sel) return;
+  if(sel.kind==='node'){ doc.nodes=doc.nodes.filter(n=>n.id!==sel.id); doc.edges=doc.edges.filter(e=>e.from!==sel.id&&e.to!==sel.id); }
+  else if(sel.kind==='edge'){ doc.edges=doc.edges.filter(e=>e.id!==sel.id); }
+  else if(sel.kind==='lane'){ laneOp(sel.id,'del'); return; }
+  sel=null; touch();
+}
+
+/* ---------- 書き出し / 読み込み ---------- */
+function toMermaid(){
+  const L=[`flowchart LR`];
+  const nid={}; doc.nodes.forEach((n,i)=>nid[n.id]='n'+i);
+  doc.lanes.forEach(l=>{
+    const ns=doc.nodes.filter(n=>n.lane===l.id); if(!ns.length) return;
+    L.push(`  subgraph ${l.kind==='system'?'sys':'act'}_${nid[ns[0].id]} ["${l.kind==='system'?'🗄 ':''}${l.name}"]`);
+    ns.forEach(n=>{ const lb=n.label.replace(/"/g,"'"); const sh=n.type==='decision'?`{"${lb}"}`:n.type==='data'?`[("${lb}")]`:n.type==='start'||n.type==='end'?`(("${lb}"))`:`["${lb}"]`; L.push(`    ${nid[n.id]}${sh}`); });
+    L.push('  end');
+  });
+  doc.edges.forEach(e=>{ const lb=e.label?`|${e.label.replace(/\|/g,'/')}|`:''; L.push(`  ${nid[e.from]} ${e.kind==='data'?'-.->':'-->'}${lb} ${nid[e.to]}`); });
+  return L.join('\n');
+}
+function toMarkdownTables(){
+  const ln=id=>(laneOf(id)||{}).name||'?';
+  const nl=id=>(nodeById(id)||{}).label||'?';
+  const out=[`# ${doc.title||'業務フロー'}`,'',`## 登場人物・システム`,'','| 区分 | 名前 | 説明 |','|---|---|---|'];
+  doc.lanes.forEach(l=>out.push(`| ${l.kind==='actor'?'Actor':'システム'} | ${l.name} | ${l.desc||''} |`));
+  out.push('','## 業務の流れ','','| # | 担当 | 作業 | 次へ | 条件 |','|---|---|---|---|---|');
+  let i=1; doc.edges.filter(e=>e.kind==='flow').forEach(e=>{ const a=nodeById(e.from); if(!a) return; out.push(`| ${i++} | ${ln(a.lane)} | ${a.label} | ${nl(e.to)} | ${e.label||''} |`); });
+  out.push('','## データの流れ','','| # | 元 | 先 | 内容 |','|---|---|---|---|');
+  i=1; doc.edges.filter(e=>e.kind==='data').forEach(e=>{ const a=nodeById(e.from),b=nodeById(e.to); if(!a||!b) return; out.push(`| ${i++} | ${ln(a.lane)}／${a.label} | ${ln(b.lane)}／${b.label} | ${e.label||''} |`); });
+  return out.join('\n');
+}
+function openModal(title,body,onApply){
+  const m=document.createElement('div'); m.className='modal';
+  m.innerHTML=`<div class="box"><h3 style="margin:0">${title}</h3><div class="tabs" style="display:flex;gap:6px"></div><textarea id="m-text"></textarea><div style="display:flex;gap:8px;justify-content:flex-end"><button id="m-copy" class="sm">コピー</button>${onApply?'<button id="m-apply" class="primary sm">読み込む</button>':''}<button id="m-close" class="sm">閉じる</button></div></div>`;
+  document.body.appendChild(m);
+  const ta=m.querySelector('#m-text'); ta.value=body;
+  m.querySelector('#m-close').onclick=()=>m.remove();
+  m.onclick=ev=>{ if(ev.target===m) m.remove(); };
+  m.querySelector('#m-copy').onclick=()=>{ const b=m.querySelector('#m-copy'); const done=()=>{b.textContent='コピーしました';setTimeout(()=>b.textContent='コピー',1500);}; navigator.clipboard.writeText(ta.value).then(done).catch(()=>{ta.select();document.execCommand&&document.execCommand('copy');done();}); };
+  if(onApply) m.querySelector('#m-apply').onclick=()=>{ if(onApply(ta.value)!==false) m.remove(); };
+  return m;
+}
+$('#exportBtn').onclick=()=>{
+  const m=openModal('書き出し','');
+  const tabs=m.querySelector('.tabs'); const ta=m.querySelector('#m-text');
+  const kinds=[['JSON（保存・共有用）',()=>JSON.stringify(doc,null,2)],['Mermaid（Notion・GitHub用）',toMermaid],['Markdown表（Backlog・仕様書用）',toMarkdownTables]];
+  kinds.forEach(([n,f],i)=>{ const b=document.createElement('button'); b.className='sm'+(i?'':' on'); b.textContent=n; b.onclick=()=>{tabs.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');ta.value=f();}; tabs.appendChild(b); });
+  ta.value=kinds[0][1]();
+};
+$('#importBtn').onclick=()=>openModal('JSONを読み込む','',txt=>{
+  try{ const d=JSON.parse(txt); if(!Array.isArray(d.lanes)||!Array.isArray(d.nodes)) throw 0; doc=d; sel=null; touch(); fit(); }
+  catch(e){ flash('JSONの形式が違います'); return false; }
+});
+$('#sampleBtn').onclick=()=>{ doc=sample(); sel=null; touch(); fit(); };
+
+render(); fit();
+})();
+</script>
