@@ -34,6 +34,9 @@ export function SidebarRight() {
                 <option value="task">作業</option>
                 <option value="decision">判断</option>
                 <option value="data">データ</option>
+                <option value="excel">Excel</option>
+                <option value="csv">CSV</option>
+                <option value="pc">PC</option>
               </select>
             </div>
             <div className="field">

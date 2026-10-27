@@ -2,13 +2,17 @@ import { useState } from 'react';
 import type { EdgeKind, LaneKind, NodeType } from '../model/types';
 import { addLane, addNode, deleteLane, moveLane, runSentence } from '../store/actions';
 import { setState, useStore } from '../store/flowStore';
+import { NodeIcon } from './Icons';
 
-const PALETTE: { type: NodeType; title: string; sub: string; wide?: boolean }[] = [
+const PALETTE: { type: NodeType; title: string; sub: string; wide?: boolean; icon?: boolean }[] = [
   { type: 'start', title: '● 開始', sub: 'フローの起点' },
   { type: 'end', title: '◉ 終了', sub: 'フローの終点' },
   { type: 'task', title: '▭ 作業', sub: '担当者がやること' },
   { type: 'decision', title: '◇ 判断', sub: '分岐・承認' },
-  { type: 'data', title: '⌸ データ', sub: 'システム内のレコード・ファイル', wide: true },
+  { type: 'data', title: '⌸ データ', sub: 'システム内のレコード', wide: true },
+  { type: 'excel', title: 'Excel', sub: '表計算', icon: true },
+  { type: 'csv', title: 'CSV', sub: '一覧表', icon: true },
+  { type: 'pc', title: 'PC', sub: '端末・画面', icon: true },
 ];
 
 function LaneList({ kind }: { kind: LaneKind }) {
@@ -130,7 +134,8 @@ export function SidebarLeft() {
         <h3>② 部品を置く</h3>
         <div className="palette">
           {PALETTE.map((p) => (
-            <div key={p.type} className="pal" style={p.wide ? { gridColumn: '1/-1' } : undefined} onClick={() => addNode(p.type)}>
+            <div key={p.type} className={`pal${p.wide ? ' wide' : ''}${p.icon ? ' small' : ''}`} onClick={() => addNode(p.type)}>
+              {p.icon && <NodeIcon type={p.type} size={26} />}
               <b>{p.title}</b>
               <span>{p.sub}</span>
             </div>

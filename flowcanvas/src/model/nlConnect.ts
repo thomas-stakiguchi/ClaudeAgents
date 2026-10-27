@@ -21,6 +21,9 @@ const TYPE_WORDS: [string, NodeType][] = [
   ['判断', 'decision'], ['分岐', 'decision'],
   ['開始', 'start'], ['スタート', 'start'],
   ['終了', 'end'], ['ゴール', 'end'],
+  ['Excel', 'excel'], ['EXCEL', 'excel'], ['excel', 'excel'], ['エクセル', 'excel'],
+  ['CSV', 'csv'], ['csv', 'csv'],
+  ['パソコン', 'pc'], ['PC', 'pc'], ['pc', 'pc'],
 ];
 
 const DATA_WORDS = ['点線', '破線', 'データの流れ', '点々'];

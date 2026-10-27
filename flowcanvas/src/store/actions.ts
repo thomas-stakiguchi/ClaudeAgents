@@ -55,7 +55,11 @@ export function deleteLane(id: string) {
   setState((s) => ({ confirmDel: null, sel: s.sel?.id === id ? null : s.sel }));
 }
 
-const DEFAULT_LABEL: Record<NodeType, string> = { start: '開始', end: '終了', task: '作業', decision: '判断？', data: 'データ' };
+const DEFAULT_LABEL: Record<NodeType, string> = {
+  start: '開始', end: '終了', task: '作業', decision: '判断？', data: 'データ', excel: 'Excelファイル', csv: 'CSVファイル', pc: 'PC',
+};
+// システム側のレーンに置きたい部品（ファイル・データ）
+const SYSTEM_SIDE: NodeType[] = ['data', 'excel', 'csv'];
 
 export function addNode(type: NodeType) {
   const { flow, sel } = getState();
@@ -63,8 +67,8 @@ export function addNode(type: NodeType) {
   let laneId =
     sel?.kind === 'lane' ? sel.id : sel?.kind === 'node' ? flow.nodes.find((n) => n.id === sel.id)?.lane : undefined;
   if (!laneId) {
-    // 未選択なら最初のレーン。データは最初のシステムレーン
-    const pref = flow.lanes.find((l) => l.kind === (type === 'data' ? 'system' : 'actor')) ?? flow.lanes[0];
+    // 未選択なら最初のレーン。データ・Excel・CSV は最初のシステムレーン
+    const pref = flow.lanes.find((l) => l.kind === (SYSTEM_SIDE.includes(type) ? 'system' : 'actor')) ?? flow.lanes[0];
     if (!pref) return flash('先にActorかシステムを追加してください');
     laneId = pref.id;
   }

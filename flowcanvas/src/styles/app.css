@@ -29,7 +29,8 @@ h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;c
 .row .sw{width:10px;height:10px;border-radius:3px;flex:none}
 .row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 .row .ops{display:flex;gap:2px}
-.palette{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.palette{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.pal{grid-column:span 3}.pal.wide{grid-column:1/-1}.pal.small{grid-column:span 2;padding:6px 2px}
 .pal{border:1px dashed var(--line);border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;background:var(--bg)}
 .pal:hover{border-color:var(--accent);color:var(--accent)}
 .pal b{display:block;font-size:12px}
@@ -112,3 +113,8 @@ svg.edges text{font-family:var(--font);font-size:11px;fill:var(--fg);paint-order
 .lbl{font-size:12px;color:var(--muted);white-space:nowrap}
 details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
 .subhead{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:500;margin-bottom:6px}
+/* アイコンの部品（Excel・CSV・PC）：枠なし、アイコンの下に名前 */
+.node.icon{flex-direction:column;gap:2px;padding:2px 4px;background:transparent;border:0;border-radius:6px;overflow:visible}
+.node.icon span{font-size:11px;line-height:1.25;max-height:2.5em;overflow:hidden}
+.nwrap.sel .node.icon{background:var(--accent-soft)}
+.pal svg{display:block;margin:0 auto 2px}

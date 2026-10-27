@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import {
-  createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, setState, undo, useStore,
+  createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
 } from '../store/flowStore';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
 import { ExportModal, ImportModal } from './ExportModal';
 
 const SAVE_LABEL = { saved: '保存済', dirty: '未保存', saving: '保存中…', error: '保存できませんでした' } as const;
+
+export async function saveWithMessage() {
+  const ok = await saveNow();
+  flash(ok ? '保存しました' : '保存できませんでした。npm run dev が動いているか確認してください');
+}
 
 export function Toolbar() {
   const flows = useStore((s) => s.flows);
@@ -79,6 +84,9 @@ export function Toolbar() {
       <button className="icon" title="やり直し (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>↷</button>
       <div className="spacer" />
       <span className={`status${saveState === 'error' ? ' err' : ''}`}>{SAVE_LABEL[saveState]}</span>
+      <button className="sm primary" title="保存 (Ctrl+S)" disabled={saveState === 'saving'} onClick={() => void saveWithMessage()}>
+        保存
+      </button>
       <button className="icon" onClick={() => zoomBy(1 / 1.2)}>−</button>
       <span className="status">{Math.round(k * 100)}%</span>
       <button className="icon" onClick={() => zoomBy(1.2)}>＋</button>

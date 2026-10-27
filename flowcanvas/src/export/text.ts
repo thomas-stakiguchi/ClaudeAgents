@@ -15,7 +15,12 @@ export function toMermaid(doc: Flow) {
     ns.forEach((n) => {
       const lb = n.label.replace(/"/g, "'");
       const sh =
-        n.type === 'decision' ? `{"${lb}"}` : n.type === 'data' ? `[("${lb}")]` : n.type === 'start' || n.type === 'end' ? `(("${lb}"))` : `["${lb}"]`;
+        n.type === 'decision' ? `{"${lb}"}`
+        : n.type === 'data' ? `[("${lb}")]`
+        : n.type === 'start' || n.type === 'end' ? `(("${lb}"))`
+        : n.type === 'excel' || n.type === 'csv' ? `[/"${lb}"/]`
+        : n.type === 'pc' ? `["🖥 ${lb}"]`
+        : `["${lb}"]`;
       L.push(`    ${nid[n.id]}${sh}`);
     });
     L.push('  end');
