@@ -76,6 +76,14 @@ function scheduleSave() {
   saveTimer = setTimeout(() => void flushSave(), SAVE_DELAY);
 }
 
+/** 保存ボタン・Ctrl+S：変更がなくても今の内容をすぐ書き込む */
+export async function saveNow() {
+  if (!state.flow) return false;
+  setState({ saveState: 'dirty' });
+  await flushSave();
+  return getState().saveState === 'saved';
+}
+
 export async function flushSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;

@@ -4,7 +4,7 @@ import { getState, loadFlows, redo, setState, undo } from './store/flowStore';
 import { Canvas } from './components/Canvas';
 import { SidebarLeft } from './components/SidebarLeft';
 import { SidebarRight } from './components/SidebarRight';
-import { Toolbar } from './components/Toolbar';
+import { saveWithMessage, Toolbar } from './components/Toolbar';
 
 export function App() {
   useEffect(() => {
@@ -24,8 +24,14 @@ export function App() {
         setState({ connectSrc: null, confirmDel: null });
         return;
       }
-      if (inField) return; // 入力欄の中ではブラウザ標準の取り消しを使う
       const mod = ev.ctrlKey || ev.metaKey;
+      // Ctrl+S は入力中でも保存（ブラウザの「ページを保存」は出さない）
+      if (mod && (ev.key === 's' || ev.key === 'S')) {
+        ev.preventDefault();
+        void saveWithMessage();
+        return;
+      }
+      if (inField) return; // 入力欄の中ではブラウザ標準の取り消しを使う
       if (mod && (ev.key === 'z' || ev.key === 'Z')) {
         ev.preventDefault();
         if (ev.shiftKey) redo();

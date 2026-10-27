@@ -1,5 +1,6 @@
 import { memo } from 'react';
-import { nodeSize, type Node } from '../model/types';
+import { isIconType, nodeSize, type Node } from '../model/types';
+import { NodeIcon } from './Icons';
 
 type Props = { node: Node; top: number; selected: boolean; isSrc: boolean };
 
@@ -19,9 +20,16 @@ export const NodeView = memo(function NodeView({ node, top, selected, isSrc }: P
       style={{ left: node.x, top: top + node.ly, width: w, height: h }}
       title={node.note || undefined}
     >
-      <div className={`node ${node.type}`}>
-        <span>{node.label}</span>
-      </div>
+      {isIconType(node.type) ? (
+        <div className={`node icon ${node.type}`}>
+          <NodeIcon type={node.type} size={40} />
+          <span>{node.label}</span>
+        </div>
+      ) : (
+        <div className={`node ${node.type}`}>
+          <span>{node.label}</span>
+        </div>
+      )}
       {PORTS.map(([p, left, t]) => (
         <div key={p} className="port" data-port={p} style={{ left, top: t }} />
       ))}
