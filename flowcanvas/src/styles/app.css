@@ -3,15 +3,15 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-
 #root{display:flex;flex-direction:column}
 *{box-sizing:border-box}
 button,select,input,textarea{font:inherit;color:inherit}
-button{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+button{background:var(--panel);border:1px solid var(--field-line);border-radius:6px;padding:5px 10px;cursor:pointer}
 button:hover{border-color:var(--accent)}
 button:disabled{opacity:.45;cursor:default;border-color:var(--line)}
-button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
 button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 button.sm{padding:2px 7px;font-size:12px}
 button.icon{padding:2px 6px;line-height:1}
 button.danger{color:var(--danger)}
-input[type=text],textarea,select{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%}
+input[type=text],textarea,select{background:var(--panel);border:1px solid var(--field-line);border-radius:6px;padding:6px 8px;width:100%}
 textarea{resize:vertical;min-height:60px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .top{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
@@ -31,7 +31,7 @@ h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;c
 .row .ops{display:flex;gap:2px}
 .palette{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
 .pal{grid-column:span 3}.pal.wide{grid-column:1/-1}.pal.small{grid-column:span 2;padding:6px 2px}
-.pal{border:1px dashed var(--line);border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;background:var(--bg)}
+.pal{border:1px dashed var(--field-line);border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;background:var(--bg)}
 .pal:hover{border-color:var(--accent);color:var(--accent)}
 .pal b{display:block;font-size:12px}
 .pal span{font-size:11px;color:var(--muted)}
@@ -43,14 +43,14 @@ h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;c
 .canvas.connect,.canvas.linking{cursor:crosshair}
 .world{position:absolute;left:0;top:0;transform-origin:0 0}
 .lane{position:absolute;left:0;display:flex}
-.lane .head{width:120px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;padding:8px 10px;font-weight:700;gap:2px;cursor:pointer;word-break:break-word}
-.lane .head small{font-weight:400;color:var(--muted);font-size:10px;letter-spacing:.06em}
+.lane .head{width:120px;flex:none;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;padding:8px 10px;font-weight:700;font-size:14px;gap:2px;cursor:pointer;word-break:break-word}
+.lane .head small{font-weight:400;color:var(--muted);font-size:11px}
 .lane.actor{background:var(--lane-actor)}.lane.actor .head{background:var(--lane-head)}
 .lane.system{background:var(--lane-sys)}.lane.system .head{background:var(--lane-head-sys)}
 .lane.sel .head{box-shadow:inset 3px 0 0 var(--accent)}
 .lane .body{flex:1;border-bottom:1px solid var(--line);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:20px 20px}
 .divider{position:absolute;left:0;height:0;border-top:2px dashed var(--data-line)}
-.divider span{position:absolute;left:124px;top:-9px;font-size:10px;letter-spacing:.1em;color:var(--data-line);background:var(--bg);padding:0 6px;font-family:var(--mono)}
+.divider span{position:absolute;left:124px;top:-10px;font-size:11px;color:var(--data-line);background:var(--bg);padding:0 6px}
 svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 svg.edges path.hit{stroke:transparent;stroke-width:14;fill:none;pointer-events:stroke;cursor:pointer}
 svg.edges path.line{fill:none;stroke-width:1.8;pointer-events:none}
@@ -58,16 +58,16 @@ svg.edges path.line.flow{stroke:var(--flow)}
 svg.edges path.line.data{stroke:var(--dflow);stroke-dasharray:6 4}
 svg.edges path.line.pending{stroke:var(--ok);stroke-width:2;stroke-dasharray:4 4}
 svg.edges marker path.arF{fill:var(--flow)}svg.edges marker path.arD{fill:var(--dflow)}
-svg.edges text{font-family:var(--font);font-size:11px;fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:4px;pointer-events:none}
+svg.edges text{font-family:var(--font);font-size:12px;fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:4px;pointer-events:none}
 /* 部品：.nwrap が位置と当たり判定、.node が見た目、.port は外側に置く（判断のひし形で切れないように） */
 .nwrap{position:absolute;cursor:move;user-select:none}
-.node{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px 10px;background:var(--node);border:1.5px solid var(--node-line);border-radius:6px;line-height:1.3;font-size:12px;word-break:break-word;overflow:hidden}
+.node{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:6px 10px;background:var(--node);border:1.5px solid var(--node-line);border-radius:6px;line-height:1.3;font-size:13px;word-break:break-word;overflow:hidden}
 .node.decision{border-radius:0;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border:0;background:var(--node-line);padding:0}
 .node.decision::before{content:"";position:absolute;inset:1.5px;background:var(--node);clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);z-index:0}
-.node.decision span{position:relative;z-index:1;padding:0 18px;font-size:11px}
-.node.start,.node.end{border-radius:50%;font-size:10px;padding:0}
+.node.decision span{position:relative;z-index:1;padding:0 18px;font-size:12px}
+.node.start,.node.end{border-radius:50%;font-size:11px;padding:0}
 .node.end{border-width:3px}
-.node.data{background:var(--data);border-color:var(--data-line);border-radius:4px 4px 12px 12px;font-family:var(--mono);font-size:11px;overflow:visible}
+.node.data{background:var(--data);border-color:var(--data-line);border-radius:4px 4px 12px 12px;font-family:var(--mono);font-size:12px;overflow:visible}
 .node.data::after{content:"";position:absolute;left:0;right:0;top:-1px;height:8px;border-bottom:1.5px solid var(--data-line);border-radius:0 0 50% 50%}
 .nwrap.sel .node{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 1.5px var(--accent)}
 .nwrap.sel .node.decision{background:var(--accent);box-shadow:none}
@@ -114,7 +114,7 @@ details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:va
 .subhead{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:500;margin-bottom:6px}
 /* アイコンの部品（Excel・CSV・PC）：枠なし、アイコンの下に名前 */
 .node.icon{flex-direction:column;gap:2px;padding:2px 4px;background:transparent;border:0;border-radius:6px;overflow:visible}
-.node.icon span{font-size:11px;line-height:1.25;max-height:2.5em;overflow:hidden}
+.node.icon span{font-size:12px;line-height:1.25;max-height:2.5em;overflow:hidden}
 .nwrap.sel .node.icon{background:var(--accent-soft)}
 .pal svg{display:block;margin:0 auto 2px}
 /* 書き出しメニュー */
@@ -128,12 +128,25 @@ details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:va
 .hint.place{margin-top:8px}
 .hint.place b{color:var(--fg)}
 /* 付せん：黄色い紙。色はテーマに関係なく固定（ダークでも読めるように文字は濃い色） */
-.node.note{background:#FFF1A8;border:1px solid #D9B93A;border-radius:2px;color:#2b2a22;justify-content:flex-start;align-items:flex-start;text-align:left;padding:8px 10px;font-size:12px;box-shadow:2px 3px 0 rgba(0,0,0,.12);white-space:pre-wrap}
+.node.note{background:#FFF1A8;border:1px solid #D9B93A;border-radius:2px;color:#2b2a22;justify-content:flex-start;align-items:flex-start;text-align:left;padding:8px 10px;font-size:13px;box-shadow:2px 3px 0 rgba(0,0,0,.12);white-space:pre-wrap}
 .nwrap.sel .node.note{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 1.5px var(--accent)}
 /* 範囲選択の四角 */
 .selbox{position:absolute;border:1.5px dashed var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);pointer-events:none;z-index:4}
 /* 部品の上で名前を書く欄 */
-.inline-edit{position:absolute;inset:-2px;z-index:5;min-height:0;resize:none;padding:6px 8px;font-size:12px;line-height:1.3;text-align:center;border:2px solid var(--accent);border-radius:6px;background:var(--panel);color:var(--fg);box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.inline-edit{position:absolute;inset:-2px;z-index:5;min-height:0;resize:none;padding:6px 8px;font-size:13px;line-height:1.3;text-align:center;border:2px solid var(--accent);border-radius:6px;background:var(--panel);color:var(--fg);box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .align-btns{display:flex;flex-wrap:wrap;gap:4px}
 .side-pick>div{display:flex;gap:8px}
 .side-sel{display:flex;flex-direction:column;gap:2px;flex:1;font-size:11px;color:var(--muted)}
+/* 書き出しの見出し（タイトル・出力日・凡例） */
+.export-head{position:absolute;left:0;right:0;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;padding:0 4px;color:var(--fg)}
+.eh-title{font-size:22px;font-weight:700}
+.eh-meta{display:flex;align-items:center;gap:20px;font-size:13px;color:var(--muted)}
+.eh-legend{display:inline-flex;align-items:center;gap:6px}
+/* 白い背景・マス目なし（印刷向け） */
+.world.plain .lane .body{background-image:none}
+.world.plain .lane.actor{background:#fff}.world.plain .lane.actor .head{background:#f2f2f0}
+.world.plain .lane.system{background:#f4f7fb}.world.plain .lane.system .head{background:#e6edf5}
+.world.plain .divider span{background:#fff}
+.menu-sep{height:1px;background:var(--line);margin:4px 2px}
+.menu-note{font-size:11px;color:var(--muted);padding:4px 10px 2px}
+.menu .check{display:inline-block;width:1.4em}

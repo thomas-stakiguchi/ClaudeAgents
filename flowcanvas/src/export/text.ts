@@ -47,7 +47,7 @@ export function toMarkdownTables(doc: Flow) {
   const laneName = (id: string) => doc.lanes.find((l) => l.id === id)?.name ?? '?';
   const node = (id: string) => doc.nodes.find((n) => n.id === id);
   const out = [`# ${doc.title || '業務フロー'}`, '', '## 登場人物・システム', '', '| 区分 | 名前 | 説明 |', '|---|---|---|'];
-  doc.lanes.forEach((l) => out.push(`| ${l.kind === 'actor' ? 'Actor' : 'システム'} | ${l.name} | ${l.desc || ''} |`));
+  doc.lanes.forEach((l) => out.push(`| ${l.kind === 'actor' ? '担当者' : 'システム'} | ${l.name} | ${l.desc || ''} |`));
   out.push('', '## 業務の流れ', '', '| # | 担当 | 作業 | 次へ | 条件 |', '|---|---|---|---|---|');
   let i = 1;
   doc.edges

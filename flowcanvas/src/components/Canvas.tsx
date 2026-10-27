@@ -4,6 +4,7 @@ import { LANE_H, nodeSize, type Node, type Side } from '../model/types';
 import { connect, selectNodes, startEdit } from '../store/actions';
 import { beginGesture, editSilent, getState, selectedNodeIds, setState, useStore, type View } from '../store/flowStore';
 import { EdgeLayer } from './EdgeLayer';
+import { ExportHeader } from './ExportHeader';
 import { LaneLayer } from './Lane';
 import { NodeLayer } from './NodeView';
 
@@ -12,7 +13,7 @@ const clampK = (k: number) => Math.min(K_MAX, Math.max(K_MIN, k));
 
 /** ツールバーから呼ぶための口（全体表示・画像書き出し） */
 export const canvasApi = {
-  fit: () => {},
+  fit: (_mode?: 'all' | 'open') => {},
   world: null as HTMLDivElement | null,
 };
 
@@ -51,13 +52,19 @@ export function Canvas() {
     return [(cx - r.left - v.x) / v.k, (cy - r.top - v.y) / v.k];
   };
 
-  const fit = useCallback(() => {
+  /**
+   * all：図の全体が入る倍率（全体表示ボタン）
+   * open：図を開いたとき。全体が入る倍率を目安にするが、文字が読めないほど小さくはせず（70%まで）、
+   *       空の図などで大きくなりすぎないようにする（100%まで）
+   */
+  const fit = useCallback((mode: 'all' | 'open' = 'all') => {
     const f = getState().flow;
     const el = canvasRef.current;
     if (!f || !el) return;
     const r = el.getBoundingClientRect();
     const W = contentRight(f) + 40, H = Math.max(1, f.lanes.length) * LANE_H;
-    const k = Math.min(2, Math.max(K_MIN, Math.min((r.width - 40) / W, (r.height - 40) / H)));
+    const whole = Math.min((r.width - 40) / W, (r.height - 40) / H);
+    const k = mode === 'open' ? Math.min(1, Math.max(0.7, whole)) : Math.min(2, Math.max(K_MIN, whole));
     setState({ view: { x: 20, y: 20, k } });
   }, []);
 
@@ -69,7 +76,7 @@ export function Canvas() {
   // 図を開いたら全体表示
   const flowId = flow?.id;
   useEffect(() => {
-    if (flowId) fit();
+    if (flowId) fit('open');
   }, [flowId, fit]);
 
   // ホイール：上下移動、Ctrl+ホイール：拡大縮小（preventDefault のため passive:false で登録）
@@ -277,7 +284,12 @@ export function Canvas() {
       onPointerCancel={onPointerUp}
       onDoubleClick={onDoubleClick}
     >
-      <div className={`world${exporting ? ' exporting' : ''}`} ref={worldRef} style={{ transform: viewTransform(view) }}>
+      <div
+        className={`world${exporting ? ' exporting' : ''}${exporting && exporting.plain ? ' plain' : ''}`}
+        ref={worldRef}
+        style={{ transform: viewTransform(view), width: exporting ? width : undefined }}
+      >
+        {flow && exporting && exporting.header && <ExportHeader flow={flow} />}
         {flow && (
           <>
             <LaneLayer lanes={flow.lanes} width={width} selId={showSel && sel?.kind === 'lane' ? sel.id : null} />
