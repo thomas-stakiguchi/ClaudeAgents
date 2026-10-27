@@ -55,7 +55,7 @@ export function moveLane(id: string, dir: -1 | 1) {
   });
 }
 
-/** 部品が残っているレーンは2回押しで確定（confirm() は使わない） */
+/** 部品が残っているレーンは確認の小窓を出す（「はい」でもう一度ここに来て消す） */
 export function deleteLane(id: string) {
   const { flow, confirmDel } = getState();
   if (!flow) return;

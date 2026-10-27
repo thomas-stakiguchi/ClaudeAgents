@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
-  createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
+  createFlow, createSampleFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
   type State,
 } from '../store/flowStore';
 import { loadExportOptions, saveExportOptions, type ExportOptions } from '../export/options';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
 import { DropMenu, type MenuItem } from './DropMenu';
+import { ConfirmDelete } from './ConfirmDelete';
 import { ExportModal } from './ExportModal';
 import { GuideModal } from './GuideModal';
 import { ImportModal } from './ImportModal';
@@ -25,7 +26,6 @@ export function Toolbar() {
   const saveState = useStore((s) => s.saveState);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
-  const confirmDel = useStore((s) => s.confirmDel);
   const modal = useStore((s) => s.modal);
   const setModal = (m: State['modal']) => setState({ modal: m });
   const [opts, setOpts] = useState<ExportOptions>(loadExportOptions);
@@ -72,15 +72,7 @@ export function Toolbar() {
     }
   };
 
-  const onDeleteFlow = () => {
-    if (confirmDel !== 'flow') {
-      setState({ confirmDel: 'flow' });
-      flash('「…」から、もう一度「削除」を押すとこの図を消します');
-      return;
-    }
-    setState({ confirmDel: null });
-    void deleteFlow();
-  };
+  const onDeleteFlow = () => setState({ confirmDel: 'flow' });
 
   const themeItem = (t: Theme, label: string) => ({
     kind: 'radio' as const,
@@ -103,7 +95,7 @@ export function Toolbar() {
   ];
   const moreItems: MenuItem[] = [
     { label: 'この図を複製', onSelect: () => void duplicateFlow() },
-    { label: confirmDel === 'flow' ? 'もう一度押すとこの図を削除します' : 'この図を削除', danger: true, onSelect: onDeleteFlow },
+    { label: 'この図を削除…', danger: true, onSelect: onDeleteFlow },
     { label: 'サンプルの図を開く', onSelect: () => void createSampleFlow() },
     { kind: 'sep' },
     { kind: 'note', label: '画面の明るさ' },
@@ -155,6 +147,7 @@ export function Toolbar() {
       {modal === 'export' && <ExportModal onClose={() => setModal(null)} />}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} />}
       {modal === 'guide' && <GuideModal onClose={() => setModal(null)} />}
+      <ConfirmDelete />
     </header>
   );
 }

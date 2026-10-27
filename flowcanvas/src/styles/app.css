@@ -202,6 +202,9 @@ svg.edges text{font-family:var(--font);font-size:12px;fill:var(--fg);paint-order
 .modal-head{display:flex;align-items:center;justify-content:space-between}
 .modal-head h2{font-size:18px}
 .modal textarea{min-height:260px;font-size:12px}
+.confirm-q{font-size:16px;font-weight:700;margin:0}
+.modal .actions button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+.modal .actions button.danger:hover{filter:brightness(1.08);color:#fff;background:var(--danger)}
 .modal .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .tabs{display:flex;gap:4px;flex-wrap:wrap;padding:4px;background:var(--panel-2);border-radius:12px}
 .tab{border:0;background:transparent;min-height:32px;border-radius:9px;color:var(--muted)}
