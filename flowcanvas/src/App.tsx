@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { deleteSel } from './store/actions';
+import { copySel, deleteSel, paste, selectAll, startEdit } from './store/actions';
 import { getState, loadFlows, redo, setState, undo } from './store/flowStore';
 import { Canvas } from './components/Canvas';
 import { SidebarLeft } from './components/SidebarLeft';
@@ -43,7 +43,29 @@ export function App() {
         redo();
         return;
       }
+      if (mod && (ev.key === 'c' || ev.key === 'C')) {
+        if (copySel()) ev.preventDefault();
+        return;
+      }
+      if (mod && (ev.key === 'v' || ev.key === 'V')) {
+        ev.preventDefault();
+        paste();
+        return;
+      }
+      if (mod && (ev.key === 'a' || ev.key === 'A')) {
+        ev.preventDefault();
+        selectAll();
+        return;
+      }
       if (mod) return;
+      const cur = getState().sel;
+      // ボタンなどを選んでいるときの Enter は、そのボタンのために残す
+      const onPage = !el || el === document.body;
+      if ((ev.key === 'Enter' || ev.key === 'F2') && cur?.kind === 'node' && onPage) {
+        ev.preventDefault();
+        startEdit(cur.id);
+        return;
+      }
       if (ev.key === 'Delete' || ev.key === 'Backspace') {
         ev.preventDefault();
         deleteSel();

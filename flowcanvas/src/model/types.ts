@@ -15,7 +15,19 @@ export type Node = {
   label: string;
   note?: string;
 };
-export type Edge = { id: string; from: string; to: string; kind: EdgeKind; label?: string; color?: string /* 未設定なら種類ごとの既定色 */ };
+export type Side = 'top' | 'right' | 'bottom' | 'left';
+export type Route = 'curve' | 'ortho';
+export type Edge = {
+  id: string;
+  from: string;
+  to: string;
+  kind: EdgeKind;
+  label?: string;
+  color?: string; // 未設定なら種類ごとの既定色
+  route?: Route; // 未設定なら曲線
+  fromSide?: Side; // 未設定なら向きから自動で決める
+  toSide?: Side;
+};
 export type Flow = { id: string; title: string; lanes: Lane[]; nodes: Node[]; edges: Edge[]; updatedAt: string };
 export type FlowSummary = Pick<Flow, 'id' | 'title' | 'updatedAt'>;
 

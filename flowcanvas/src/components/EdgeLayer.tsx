@@ -46,7 +46,7 @@ export const EdgeLayer = memo(function EdgeLayer({ edges, nodes, tops, selId, wi
 type EdgeProps = { edge: Edge; a: Node; b: Node; aTop: number; bTop: number; selected: boolean; marker: string };
 
 const EdgeView = memo(function EdgeView({ edge, a, b, aTop, bTop, selected, marker }: EdgeProps) {
-  const { d, mx, my } = edgePath(nodeRect(a, aTop), nodeRect(b, bTop));
+  const { d, mx, my } = edgePath(nodeRect(a, aTop), nodeRect(b, bTop), edge);
   return (
     <g>
       <path className="hit" d={d} data-id={edge.id} style={{ fill: 'none', stroke: 'transparent' }} />

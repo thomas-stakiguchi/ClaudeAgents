@@ -1,8 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { produce, type Draft } from 'immer';
-import type { Flow, FlowSummary, EdgeKind } from '../model/types';
+import type { Flow, FlowSummary, EdgeKind, Route } from '../model/types';
 
-export type Sel = { kind: 'node' | 'edge' | 'lane'; id: string } | null;
+export type Sel = { kind: 'node' | 'edge' | 'lane'; id: string } | { kind: 'nodes'; ids: string[] } | null;
+
+/** 選んでいる部品の id（1つでも複数でも） */
+export const selectedNodeIds = (sel: Sel): string[] => (sel?.kind === 'node' ? [sel.id] : sel?.kind === 'nodes' ? sel.ids : []);
 export type Tool = 'select' | 'connect';
 export type View = { x: number; y: number; k: number };
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
@@ -14,6 +17,8 @@ export type State = {
   tool: Tool;
   connectSrc: string | null;
   edgeKind: EdgeKind;
+  edgeRoute: Route; // これから引く線の形
+  editing: string | null; // 図の上で名前を書いている部品
   view: View;
   saveState: SaveState;
   past: Flow[];
@@ -33,6 +38,8 @@ let state: State = {
   tool: 'select',
   connectSrc: null,
   edgeKind: 'flow',
+  edgeRoute: 'curve',
+  editing: null,
   view: { x: 20, y: 20, k: 1 },
   saveState: 'saved',
   past: [],
@@ -154,6 +161,10 @@ export function editSilent(recipe: (d: Draft<Flow>) => void) {
 }
 function validSel(flow: Flow, sel: Sel): Sel {
   if (!sel) return null;
+  if (sel.kind === 'nodes') {
+    const ids = sel.ids.filter((id) => flow.nodes.some((n) => n.id === id));
+    return ids.length > 1 ? { kind: 'nodes', ids } : ids.length === 1 ? { kind: 'node', id: ids[0] } : null;
+  }
   const list = sel.kind === 'node' ? flow.nodes : sel.kind === 'edge' ? flow.edges : flow.lanes;
   return list.some((x) => x.id === sel.id) ? sel : null;
 }

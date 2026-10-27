@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clampNode, laneTops, nodeRect, portPoint, worldWidth, contentRight, type Port } from '../model/geometry';
-import { LANE_H, nodeSize, type Node } from '../model/types';
-import { connect } from '../store/actions';
-import { beginGesture, editSilent, getState, setState, useStore, type View } from '../store/flowStore';
+import { LANE_H, nodeSize, type Node, type Side } from '../model/types';
+import { connect, selectNodes, startEdit } from '../store/actions';
+import { beginGesture, editSilent, getState, selectedNodeIds, setState, useStore, type View } from '../store/flowStore';
 import { EdgeLayer } from './EdgeLayer';
 import { LaneLayer } from './Lane';
 import { NodeLayer } from './NodeView';
@@ -18,8 +18,9 @@ export const canvasApi = {
 
 type Drag =
   | { type: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
-  | { type: 'node'; id: string; ox: number; oy: number; sx: number; sy: number; moved: boolean }
-  | { type: 'link'; sx: number; sy: number; moved: boolean };
+  | { type: 'node'; starts: { id: string; x: number; y: number }[]; wx: number; wy: number; sx: number; sy: number; moved: boolean }
+  | { type: 'link'; sx: number; sy: number; moved: boolean }
+  | { type: 'box'; wx: number; wy: number; sx: number; sy: number; add: boolean; moved: boolean };
 
 export function Canvas() {
   const flow = useStore((s) => s.flow);
@@ -35,6 +36,9 @@ export function Canvas() {
   const drag = useRef<Drag | null>(null);
   const [mouse, setMouse] = useState<[number, number] | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [box, setBox] = useState<[number, number, number, number] | null>(null); // 範囲選択の四角（図の座標）
+  const fromSide = useRef<Side | undefined>(undefined); // ポートから引き始めた辺
+  const editing = useStore((s) => s.editing);
 
   const lanes = flow?.lanes, nodes = flow?.nodes;
   const tops = useMemo(() => (flow ? laneTops(flow) : new Map<string, number>()), [lanes]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -105,11 +109,13 @@ export function Canvas() {
     // 接続中：相手の部品をクリックで確定
     if (s.connectSrc && nodeEl) {
       const id = nodeEl.dataset.id!;
-      if (id !== s.connectSrc) connect(s.connectSrc, id);
+      if (id !== s.connectSrc) connect(s.connectSrc, id, { fromSide: fromSide.current });
+      fromSide.current = undefined;
       return;
     }
     // ポートをクリック → 線が追従
     if (port && nodeEl) {
+      fromSide.current = (port as HTMLElement).dataset.port as Side;
       setState({ connectSrc: nodeEl.dataset.id!, sel: null });
       setMouse(toWorld(ev.clientX, ev.clientY));
       drag.current = { type: 'link', sx: ev.clientX, sy: ev.clientY, moved: false };
@@ -119,19 +125,35 @@ export function Canvas() {
     if (nodeEl) {
       const id = nodeEl.dataset.id!;
       if (s.tool === 'connect') {
+        fromSide.current = undefined;
         setState({ connectSrc: id });
         return;
       }
-      const n = s.flow!.nodes.find((x) => x.id === id)!;
+      if (s.editing === id) return; // 名前を書いている最中
+      // Shift／Ctrl+クリック：選択に足す・外す
+      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+        selectNodes([id], true);
+        return;
+      }
+      // 複数選んでいる中の1つをつかんだら、まとめて動かす
+      const cur = selectedNodeIds(s.sel);
+      const ids = cur.includes(id) ? cur : [id];
+      if (!cur.includes(id)) setState({ sel: { kind: 'node', id } });
       const [wx, wy] = toWorld(ev.clientX, ev.clientY);
-      drag.current = { type: 'node', id, ox: wx - n.x, oy: wy - ((tops.get(n.lane) ?? 0) + n.ly), sx: ev.clientX, sy: ev.clientY, moved: false };
-      setState({ sel: { kind: 'node', id } });
+      const starts = s.flow!.nodes.filter((n) => ids.includes(n.id)).map((n) => ({ id: n.id, x: n.x, y: (tops.get(n.lane) ?? 0) + n.ly }));
+      drag.current = { type: 'node', starts, wx, wy, sx: ev.clientX, sy: ev.clientY, moved: false };
       capture();
       return;
     }
     if (hit) return void setState({ sel: { kind: 'edge', id: hit.dataset.id! }, connectSrc: null });
     if (head) return void setState({ sel: { kind: 'lane', id: head.dataset.lane! }, connectSrc: null });
-    drag.current = { type: 'pan', sx: ev.clientX, sy: ev.clientY, vx: s.view.x, vy: s.view.y, moved: false };
+    // Shift+背景ドラッグ：範囲選択。ふつうの背景ドラッグ：画面を動かす
+    if (ev.shiftKey) {
+      const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+      drag.current = { type: 'box', wx, wy, sx: ev.clientX, sy: ev.clientY, add: ev.ctrlKey || ev.metaKey, moved: false };
+    } else {
+      drag.current = { type: 'pan', sx: ev.clientX, sy: ev.clientY, vx: s.view.x, vy: s.view.y, moved: false };
+    }
     capture();
   };
 
@@ -151,6 +173,13 @@ export function Canvas() {
       if (far) d.moved = true;
       return;
     }
+    if (d.type === 'box') {
+      if (!d.moved && !far) return;
+      d.moved = true;
+      const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+      setBox([Math.min(d.wx, wx), Math.min(d.wy, wy), Math.abs(wx - d.wx), Math.abs(wy - d.wy)]);
+      return;
+    }
     if (!d.moved) {
       if (!far) return;
       d.moved = true;
@@ -158,15 +187,18 @@ export function Canvas() {
       setDragging(true);
     }
     const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+    const dx = Math.round((wx - d.wx) / 10) * 10, dy = Math.round((wy - d.wy) / 10) * 10; // 10px グリッドにスナップ
     editSilent((f) => {
-      const n = f.nodes.find((x) => x.id === d.id);
-      if (!n) return;
-      n.x = Math.round((wx - d.ox) / 10) * 10; // 10px グリッドにスナップ
-      const absY = wy - d.oy;
-      const li = Math.max(0, Math.min(f.lanes.length - 1, Math.floor((absY + nodeSize(n.type)[1] / 2) / LANE_H)));
-      n.lane = f.lanes[li].id;
-      n.ly = Math.round((absY - li * LANE_H) / 10) * 10;
-      clampNode(n);
+      for (const st of d.starts) {
+        const n = f.nodes.find((x) => x.id === st.id);
+        if (!n) continue;
+        n.x = st.x + dx;
+        const absY = st.y + dy;
+        const li = Math.max(0, Math.min(f.lanes.length - 1, Math.floor((absY + nodeSize(n.type)[1] / 2) / LANE_H)));
+        n.lane = f.lanes[li].id;
+        n.ly = absY - li * LANE_H;
+        clampNode(n);
+      }
     });
   };
 
@@ -183,11 +215,25 @@ export function Canvas() {
       const lane = f && wx >= 0 && wx <= width && li >= 0 ? f.lanes[li] : undefined;
       setState({ sel: lane ? { kind: 'lane', id: lane.id } : null, connectSrc: null, confirmDel: null });
     }
+    if (d.type === 'box') {
+      setBox(null);
+      const f = getState().flow;
+      if (!d.moved || !f) return;
+      const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+      const x0 = Math.min(d.wx, wx), x1 = Math.max(d.wx, wx), y0 = Math.min(d.wy, wy), y1 = Math.max(d.wy, wy);
+      // 四角に少しでもかかった部品を選ぶ
+      const hits = f.nodes.filter((n) => {
+        const r = nodeRect(n, tops.get(n.lane) ?? 0);
+        return r.x < x1 && r.x + r.w > x0 && r.y < y1 && r.y + r.h > y0;
+      });
+      selectNodes(hits.map((n) => n.id), d.add);
+      return;
+    }
     if (d.type === 'link' && d.moved) {
       // ポートからドラッグして部品の上で離しても繋がる
       const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('.nwrap');
       const src = getState().connectSrc;
-      if (el && src && el.dataset.id !== src) connect(src, el.dataset.id!);
+      if (el && src && el.dataset.id !== src) connect(src, el.dataset.id!, { fromSide: fromSide.current });
     }
   };
 
@@ -197,8 +243,10 @@ export function Canvas() {
     const t = document.elementFromPoint(ev.clientX, ev.clientY) ?? (ev.target as Element);
     const nodeEl = t.closest<HTMLElement>('.nwrap');
     const head = t.closest<HTMLElement>('.lane .head');
-    const target = nodeEl ? '#p-label' : head ? '#p-lane-name' : null;
-    if (nodeEl) setState({ sel: { kind: 'node', id: nodeEl.dataset.id! } });
+    const hit = t.closest<SVGPathElement>('path.hit');
+    if (nodeEl) return startEdit(nodeEl.dataset.id!); // 部品の上でそのまま名前を書く
+    const target = hit ? '#p-elabel' : head ? '#p-lane-name' : null;
+    if (hit) setState({ sel: { kind: 'edge', id: hit.dataset.id! } });
     else if (head) setState({ sel: { kind: 'lane', id: head.dataset.lane! } });
     if (target)
       requestAnimationFrame(() => {
@@ -216,6 +264,7 @@ export function Canvas() {
   }
 
   const showSel = !exporting;
+  const selIds = useMemo(() => new Set(selectedNodeIds(sel)), [sel]);
   const cls = ['canvas', tool === 'connect' && 'connect', connectSrc && 'linking', dragging && 'dragging'].filter(Boolean).join(' ');
 
   return (
@@ -241,7 +290,8 @@ export function Canvas() {
               height={height}
               pending={showSel ? pending : null}
             />
-            <NodeLayer nodes={flow.nodes} tops={tops} selId={showSel && sel?.kind === 'node' ? sel.id : null} srcId={showSel ? connectSrc : null} />
+            <NodeLayer nodes={flow.nodes} tops={tops} selIds={showSel ? selIds : NO_IDS} srcId={showSel ? connectSrc : null} editingId={editing} />
+            {box && <div className="selbox" style={{ left: box[0], top: box[1], width: box[2], height: box[3] }} />}
           </>
         )}
       </div>
@@ -250,6 +300,7 @@ export function Canvas() {
   );
 }
 
+const NO_IDS = new Set<string>();
 const viewTransform = (v: View) => `translate(${v.x}px,${v.y}px) scale(${v.k})`;
 
 function pendingPath(src: Node, top: number, [mx, my]: [number, number]) {
