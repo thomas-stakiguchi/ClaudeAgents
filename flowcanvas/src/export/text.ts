@@ -1,4 +1,4 @@
-import type { Flow } from '../model/types';
+import type { Edge, Flow } from '../model/types';
 
 export function toJson(flow: Flow) {
   return JSON.stringify(flow, null, 2);
@@ -49,9 +49,20 @@ export function toMarkdownTables(doc: Flow) {
   const out = [`# ${doc.title || '業務フロー'}`, '', '## 登場人物・システム', '', '| 区分 | 名前 | 説明 |', '|---|---|---|'];
   doc.lanes.forEach((l) => out.push(`| ${l.kind === 'actor' ? '担当者' : 'システム'} | ${l.name} | ${l.desc || ''} |`));
   out.push('', '## 業務の流れ', '', '| # | 担当 | 作業 | 次へ | 条件 |', '|---|---|---|---|---|');
+  // 線を作った順ではなく、元の部品の位置（左から、同じなら上の枠から）の順に並べる
+  const laneIdx = new Map(doc.lanes.map((l, k) => [l.id, k]));
+  const pos = (id: string) => {
+    const n = node(id);
+    return n ? [n.x, laneIdx.get(n.lane) ?? 0, n.ly] : [Infinity, 0, 0];
+  };
+  const byFlow = (p: Edge, q: Edge) => {
+    const a = pos(p.from), b = pos(q.from), c = pos(p.to), d = pos(q.to);
+    return a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || c[0] - d[0] || c[1] - d[1];
+  };
   let i = 1;
   doc.edges
     .filter((e) => e.kind === 'flow')
+    .sort(byFlow)
     .forEach((e) => {
       const a = node(e.from);
       if (!a) return;
@@ -61,6 +72,7 @@ export function toMarkdownTables(doc: Flow) {
   i = 1;
   doc.edges
     .filter((e) => e.kind === 'data')
+    .sort(byFlow)
     .forEach((e) => {
       const a = node(e.from), b = node(e.to);
       if (!a || !b) return;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { downloadText, fileName, toJson, toMarkdownTables, toMermaid } from '../export/text';
 import type { Flow } from '../model/types';
-import { flash, getState, importFlow } from '../store/flowStore';
+import { flash, getState, importAsNewFlow, importFlow } from '../store/flowStore';
 import { canvasApi } from './Canvas';
 
 const KINDS = [
@@ -78,12 +78,17 @@ export function ExportModal({ onClose }: { onClose: () => void }) {
 
 export function ImportModal({ onClose }: { onClose: () => void }) {
   const [text, setText] = useState('');
+  const [asNew, setAsNew] = useState(true);
   const apply = () => {
     try {
       const d = JSON.parse(text) as Flow;
       if (!Array.isArray(d.lanes) || !Array.isArray(d.nodes)) throw new Error();
-      importFlow(d);
       onClose();
+      if (asNew) {
+        void importAsNewFlow(d); // 新しい図を開くと全体が見える倍率になる
+        return;
+      }
+      importFlow(d);
       requestAnimationFrame(() => canvasApi.fit());
     } catch {
       flash('JSONの形式が違います');
@@ -93,9 +98,13 @@ export function ImportModal({ onClose }: { onClose: () => void }) {
     if (f) setText(await f.text());
   };
   return (
-    <Modal title="JSONを読み込む（今の図を置き換えます。Ctrl+Z で戻せます）" onClose={onClose}>
+    <Modal title="JSONを読み込む" onClose={onClose}>
       <input type="file" accept=".json,application/json" onChange={(e) => void onFile(e.target.files?.[0])} />
       <textarea id="m-text" value={text} onChange={(e) => setText(e.target.value)} placeholder="ここにJSONを貼り付け" />
+      <label className="check-row">
+        <input type="checkbox" checked={asNew} onChange={(e) => setAsNew(e.target.checked)} />
+        新しい図として読み込む（外すと今の図を置き換えます。Ctrl+Z で戻せます）
+      </label>
       <div className="actions">
         <button className="primary sm" onClick={apply}>読み込む</button>
         <button className="sm" onClick={onClose}>閉じる</button>

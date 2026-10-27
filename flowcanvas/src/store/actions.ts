@@ -88,23 +88,27 @@ export function targetLane(flow: Flow, sel: Sel, type: NodeType): { id: string; 
   return pref ? { id: pref.id, chosen: false } : null;
 }
 
-export function addNode(type: NodeType) {
+/** 部品を置く。at を渡すとその場所に（パレットからドラッグしたとき）、なければ枠の右端に */
+export function addNode(type: NodeType, at?: { lane: string; x: number; ly: number }) {
   const { flow, sel } = getState();
   if (!flow) return;
-  const target = targetLane(flow, sel, type);
+  const target = at ? { id: at.lane } : targetLane(flow, sel, type);
   if (!target) return flash('先に「① 枠を作る」で担当かシステムを追加してください');
   const laneId = target.id;
   const [, h] = nodeSize(type);
   const lh = laneHeight(flow.lanes.find((l) => l.id === laneId)!);
   const inLane = flow.nodes.filter((n) => n.lane === laneId);
-  const right = inLane.reduce((m, n) => Math.max(m, n.x + nodeSize(n.type)[0]), HEAD_W);
+  const right = inLane.reduce((m, n) => Math.max(m, n.x + nodeSize(n.type, n.label)[0]), HEAD_W);
   const id = uid();
   edit((d) => {
-    const n = { id, type, lane: laneId, x: Math.round((right + 40) / 10) * 10, ly: Math.round((lh - h) / 2), label: DEFAULT_LABEL[type] };
+    const n = at
+      ? { id, type, lane: laneId, x: at.x, ly: at.ly, label: DEFAULT_LABEL[type] }
+      : { id, type, lane: laneId, x: Math.round((right + 40) / 10) * 10, ly: Math.round((lh - h) / 2), label: DEFAULT_LABEL[type] };
     clampNode(n, d.lanes);
     d.nodes.push(n);
   });
   setState({ sel: { kind: 'node', id } });
+  revealNode(id); // 画面の外に置かれたら、そこまで動かす
   focusSoon('#p-label', true);
 }
 
@@ -249,7 +253,7 @@ export function alignNodes(kind: AlignKind) {
   if (!flow || ids.size < 2) return;
   const snap = (v: number) => Math.round(v / 10) * 10;
   const ns = flow.nodes.filter((n) => ids.has(n.id));
-  const w = (n: Node) => nodeSize(n.type)[0];
+  const w = (n: Node) => nodeSize(n.type, n.label)[0];
   const left = Math.min(...ns.map((n) => n.x));
   const right = Math.max(...ns.map((n) => n.x + w(n)));
   const center = ns.reduce((t, n) => t + n.x + w(n) / 2, 0) / ns.length;
@@ -262,7 +266,7 @@ export function alignNodes(kind: AlignKind) {
   edit((d) => {
     for (const n of d.nodes) {
       if (!ids.has(n.id)) continue;
-      const nw = w(n), nh = nodeSize(n.type)[1];
+      const nw = w(n), nh = nodeSize(n.type, n.label)[1];
       if (kind === 'left') n.x = left;
       if (kind === 'right') n.x = right - nw;
       if (kind === 'center') n.x = snap(center - nw / 2);
@@ -276,7 +280,7 @@ export function alignNodes(kind: AlignKind) {
   const overlap = after.some((a, i) =>
     after.slice(i + 1).some((b) => {
       if (a.lane !== b.lane) return false;
-      const [aw, ah] = nodeSize(a.type), [bw, bh] = nodeSize(b.type);
+      const [aw, ah] = nodeSize(a.type, a.label), [bw, bh] = nodeSize(b.type, b.label);
       return a.x < b.x + bw && b.x < a.x + aw && a.ly < b.ly + bh && b.ly < a.ly + ah;
     }),
   );
@@ -294,6 +298,10 @@ export function commitEdit(id: string, label: string) {
     if (n && n.label !== label) n.label = label;
   });
 }
+
+/** 部品が画面に入っていなければ、入るように画面を動かす（Canvas が中身を差し込む） */
+export const revealHook: { fn: (id: string) => void } = { fn: () => {} };
+const revealNode = (id: string) => requestAnimationFrame(() => revealHook.fn(id));
 
 export function focusSoon(selector: string, select = false) {
   requestAnimationFrame(() => {

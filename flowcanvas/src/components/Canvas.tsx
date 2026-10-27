@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clampNode, laneHeight, laneIndexAt, laneTops, nodeRect, portPoint, totalHeight, worldWidth, contentRight, type Port } from '../model/geometry';
-import { LANE_H, nodeSize, type Node, type Side } from '../model/types';
-import { connect, selectNodes, setLaneHeight, startEdit } from '../store/actions';
-import { beginGesture, editSilent, getState, selectedNodeIds, setState, useStore, type View } from '../store/flowStore';
-import { EdgeLayer } from './EdgeLayer';
+import { LANE_H, nodeSize, type Edge, type Node, type Side } from '../model/types';
+import { addLane, addNode, connect, revealHook, selectNodes, setLaneHeight, startEdit } from '../store/actions';
+import { beginGesture, editSilent, flash, getState, selectedNodeIds, setState, useStore, type View } from '../store/flowStore';
+import { EdgeCrossLayer, EdgeLayer, useEdgeGeometry } from './EdgeLayer';
 import { ExportHeader } from './ExportHeader';
-import { LaneLayer } from './Lane';
+import { LaneLayer, StickyHeads } from './Lane';
 import { NodeLayer } from './NodeView';
 
-const K_MIN = 0.25, K_MAX = 2.5;
+const K_MIN = 0.1, K_MAX = 2.5;
 const clampK = (k: number) => Math.min(K_MAX, Math.max(K_MIN, k));
+
+/** パレットからドラッグしてくる部品の種類を入れる場所 */
+export const DRAG_TYPE = 'application/x-flowcanvas-node';
 
 /** ツールバーから呼ぶための口（全体表示・画像書き出し） */
 export const canvasApi = {
@@ -72,7 +75,41 @@ export function Canvas() {
   useEffect(() => {
     canvasApi.fit = fit;
     canvasApi.world = worldRef.current;
+    // 部品が画面の外なら、入るように動かす
+    revealHook.fn = (id) => {
+      const f = getState().flow, el = canvasRef.current;
+      const n = f?.nodes.find((x) => x.id === id);
+      if (!f || !n || !el) return;
+      const r = nodeRect(n, laneTops(f).get(n.lane) ?? 0);
+      const v = getState().view, c = el.getBoundingClientRect();
+      const M = 40;
+      let { x, y } = v;
+      if (r.x * v.k + x < M) x = M - r.x * v.k;
+      if ((r.x + r.w) * v.k + x > c.width - M) x = c.width - M - (r.x + r.w) * v.k;
+      if (r.y * v.k + y < M) y = M - r.y * v.k;
+      if ((r.y + r.h) * v.k + y > c.height - M) y = c.height - M - (r.y + r.h) * v.k;
+      if (x !== v.x || y !== v.y) setState({ view: { ...v, x, y } });
+    };
   }, [fit]);
+
+  // パレットからドラッグして置く
+  const onDragOver = (ev: React.DragEvent) => {
+    if (!ev.dataTransfer.types.includes(DRAG_TYPE)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'copy';
+  };
+  const onDrop = (ev: React.DragEvent) => {
+    const type = ev.dataTransfer.getData(DRAG_TYPE) as Node['type'];
+    const f = getState().flow;
+    if (!type || !f) return;
+    ev.preventDefault();
+    if (!f.lanes.length) return void flash('先に「① 枠を作る」で担当かシステムを追加してください');
+    const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+    const lane = f.lanes[laneIndexAt(f.lanes, Math.max(0, wy))];
+    const [w, h] = nodeSize(type);
+    const snap = (v: number) => Math.round(v / 10) * 10;
+    addNode(type, { lane: lane.id, x: snap(wx - w / 2), ly: snap(wy - (laneTops(f).get(lane.id) ?? 0) - h / 2) });
+  };
 
   // 図を開いたら全体表示
   const flowId = flow?.id;
@@ -222,7 +259,7 @@ export function Canvas() {
         if (!n) continue;
         n.x = st.x + dx;
         const absY = st.y + dy;
-        const lane = f.lanes[laneIndexAt(f.lanes, absY + nodeSize(n.type)[1] / 2)];
+        const lane = f.lanes[laneIndexAt(f.lanes, absY + nodeSize(n.type, n.label)[1] / 2)];
         n.lane = lane.id;
         n.ly = absY - (tp.get(lane.id) ?? 0);
         clampNode(n, f.lanes);
@@ -293,6 +330,7 @@ export function Canvas() {
   }
 
   const showSel = !exporting;
+  const geo = useEdgeGeometry(flow?.edges ?? NO_EDGES, flow?.nodes ?? NO_NODES, tops);
   const selIds = useMemo(() => new Set(selectedNodeIds(sel)), [sel]);
   const cls = ['canvas', tool === 'connect' && 'connect', connectSrc && 'linking', dragging && 'dragging'].filter(Boolean).join(' ');
 
@@ -305,6 +343,8 @@ export function Canvas() {
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onDoubleClick={onDoubleClick}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
     >
       <div
         className={`world${exporting ? ' exporting' : ''}${exporting && exporting.plain ? ' plain' : ''}`}
@@ -317,24 +357,46 @@ export function Canvas() {
             <LaneLayer lanes={flow.lanes} width={width} selId={showSel && sel?.kind === 'lane' ? sel.id : null} />
             <EdgeLayer
               edges={flow.edges}
-              nodes={flow.nodes}
-              tops={tops}
+              geo={geo}
               selId={showSel && sel?.kind === 'edge' ? sel.id : null}
               width={width}
               height={height}
               pending={showSel ? pending : null}
             />
             <NodeLayer nodes={flow.nodes} tops={tops} selIds={showSel ? selIds : NO_IDS} srcId={showSel ? connectSrc : null} editingId={editing} />
+            <EdgeCrossLayer edges={flow.edges} geo={geo} width={width} height={height} />
+            {!exporting && view.x < 0 && <StickyHeads lanes={flow.lanes} left={-view.x / view.k} selId={sel?.kind === 'lane' ? sel.id : null} />}
             {box && <div className="selbox" style={{ left: box[0], top: box[1], width: box[2], height: box[3] }} />}
           </>
         )}
       </div>
-      {flashMsg && <div className="toast">{flashMsg}</div>}
+      {flow && !exporting && !flow.lanes.length && (
+        <div className="empty-guide" role="note">
+          <b>はじめに、枠を作ります</b>
+          <p>左の「① 枠を作る」で、作業をする人や部署（担当者）を追加してください。</p>
+          <button className="primary" onPointerDown={(e) => e.stopPropagation()} onClick={() => addLane('actor')}>
+            担当者の枠を追加する
+          </button>
+        </div>
+      )}
+      {flow && !exporting && flow.lanes.length > 0 && !flow.nodes.length && (
+        <div className="empty-guide small" role="note">
+          <b>次に、部品を置きます</b>
+          <p>左の「② 部品を置く」の部品をクリックするか、ここへドラッグしてください。</p>
+        </div>
+      )}
+      {flashMsg && (
+        <div className="toast" role="status">
+          {flashMsg}
+        </div>
+      )}
     </div>
   );
 }
 
 const NO_IDS = new Set<string>();
+const NO_EDGES: Edge[] = [];
+const NO_NODES: Node[] = [];
 const viewTransform = (v: View) => `translate(${v.x}px,${v.y}px) scale(${v.k})`;
 
 function pendingPath(src: Node, top: number, [mx, my]: [number, number]) {

@@ -30,7 +30,7 @@ export function Toolbar() {
     const el = document.querySelector('.canvas')!.getBoundingClientRect();
     const v = getState().view;
     const px = el.width / 2, py = el.height / 2;
-    const nk = Math.min(2.5, Math.max(0.25, v.k * f));
+    const nk = Math.min(2.5, Math.max(0.1, v.k * f));
     setState({ view: { x: px - ((px - v.x) * nk) / v.k, y: py - ((py - v.y) * nk) / v.k, k: nk } });
   };
 

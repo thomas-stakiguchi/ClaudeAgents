@@ -49,3 +49,24 @@ const Lane = memo(function Lane({ lane, top, width, selected }: { lane: LaneT; t
     </div>
   );
 });
+
+/** 横に動かして枠の名前が画面から出たとき、画面の左端に名前の列を出しておく */
+export function StickyHeads({ lanes, left, selId }: { lanes: LaneT[]; left: number; selId: string | null }) {
+  let y = 0;
+  return (
+    <div>
+      {lanes.map((l) => {
+        const top = y, h = laneHeight(l);
+        y += h;
+        return (
+          <div key={l.id} className={`lane sticky ${l.kind}${l.id === selId ? ' sel' : ''}`} style={{ left, top, height: h }}>
+            <div className="head" data-lane={l.id} title={l.desc || undefined}>
+              <small>{l.kind === 'actor' ? '担当者' : 'システム'}</small>
+              <div>{l.name}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
