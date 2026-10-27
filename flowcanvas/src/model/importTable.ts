@@ -208,22 +208,35 @@ export function tableToFlow(steps: StepRow[], laneRows: LaneRow[] = []): ImportR
   }
   const laneNeed = new Map<string, number>();
   for (const ns of cells.values()) {
-    const need = ns.reduce((t, n) => t + nodeSize(n.type)[1], 0) + STACK_GAP * (ns.length - 1) + 16;
+    const need = ns.reduce((t, n) => t + nodeSize(n.type, n.label)[1], 0) + STACK_GAP * (ns.length - 1) + 16;
     laneNeed.set(ns[0].lane, Math.max(laneNeed.get(ns[0].lane) ?? 0, need));
   }
   for (const l of lanes) {
     const need = laneNeed.get(l.id) ?? 0;
     if (need > LANE_H) l.h = Math.ceil(need / 10) * 10;
   }
+  // 列ごとの左端：その列で一番広い部品に合わせて間を空ける
+  const colW = new Map<number, number>();
+  for (const n of nodes) {
+    const c = colOfNode.get(n.id)!;
+    colW.set(c, Math.max(colW.get(c) ?? 150, nodeSize(n.type, n.label)[0]));
+  }
+  const colX = new Map<number, number>();
+  let cx = HEAD_W + 40;
+  for (const c of [...colW.keys()].sort((a2, b2) => a2 - b2)) {
+    colX.set(c, cx);
+    cx += colW.get(c)! + COL_GAP - 150;
+  }
   for (const ns of cells.values()) {
     const lane = lanes.find((l) => l.id === ns[0].lane)!;
     const lh = lane.h ?? LANE_H;
-    const total = ns.reduce((t, n) => t + nodeSize(n.type)[1], 0) + STACK_GAP * (ns.length - 1);
+    const total = ns.reduce((t, n) => t + nodeSize(n.type, n.label)[1], 0) + STACK_GAP * (ns.length - 1);
     let y = Math.round((lh - total) / 2);
     for (const n of ns) {
-      const [w, h] = nodeSize(n.type);
-      // 列の中心にそろえる（作業の幅 150 を基準）
-      n.x = HEAD_W + 40 + colOfNode.get(n.id)! * COL_GAP + Math.round((150 - w) / 2);
+      const [w, h] = nodeSize(n.type, n.label);
+      // 列の中心にそろえる
+      const c = colOfNode.get(n.id)!;
+      n.x = colX.get(c)! + Math.round((colW.get(c)! - w) / 2);
       n.ly = y;
       y += h + STACK_GAP;
     }

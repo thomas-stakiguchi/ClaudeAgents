@@ -14,7 +14,7 @@ const PORTS = [
 ] as const;
 
 export const NodeView = memo(function NodeView({ node, top, selected, isSrc, editing }: Props) {
-  const [w, h] = nodeSize(node.type);
+  const [w, h] = nodeSize(node.type, node.label);
   return (
     <div
       className={`nwrap${selected ? ' sel' : ''}${isSrc ? ' src' : ''}`}

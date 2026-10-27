@@ -38,8 +38,8 @@ let state: State = {
   sel: null,
   tool: 'select',
   connectSrc: null,
-  edgeKind: 'flow',
-  edgeRoute: 'curve',
+  edgeKind: loadPref('edgeKind', ['flow', 'data'] as const, 'flow'),
+  edgeRoute: loadPref('edgeRoute', ['curve', 'ortho'] as const, 'curve'),
   editing: null,
   view: { x: 20, y: 20, k: 1 },
   saveState: 'saved',
@@ -50,11 +50,27 @@ let state: State = {
   confirmDel: null,
 };
 
+/* これから引く線の種類・形はブラウザに覚えておく */
+function loadPref<T extends string>(key: string, allowed: readonly T[], def: T): T {
+  try {
+    const v = localStorage.getItem('flowcanvas.' + key);
+    return allowed.includes(v as T) ? (v as T) : def;
+  } catch {
+    return def;
+  }
+}
+
 const listeners = new Set<() => void>();
 export const getState = () => state;
 export function setState(patch: Partial<State> | ((s: State) => Partial<State>)) {
   const p = typeof patch === 'function' ? patch(state) : patch;
   state = { ...state, ...p };
+  try {
+    if (p.edgeKind) localStorage.setItem('flowcanvas.edgeKind', p.edgeKind);
+    if (p.edgeRoute) localStorage.setItem('flowcanvas.edgeRoute', p.edgeRoute);
+  } catch {
+    /* 覚えられない環境では無視 */
+  }
   listeners.forEach((l) => l());
 }
 const subscribe = (l: () => void) => {
@@ -241,6 +257,10 @@ export async function deleteFlow() {
   if (rest.length) await openFlow(rest[0].id);
   else await createFlow();
 }
+
+/** JSON を新しい図として読み込む（今の図は変えない） */
+export const importAsNewFlow = (data: Pick<Flow, 'title' | 'lanes' | 'nodes' | 'edges'>) =>
+  addAndOpen({ title: data.title || '読み込んだ図', lanes: data.lanes, nodes: data.nodes, edges: data.edges ?? [] });
 
 /** モックの「書き出し → JSON」を今の図に読み込む（id は今の図のまま） */
 export function importFlow(data: Pick<Flow, 'title' | 'lanes' | 'nodes' | 'edges'>) {

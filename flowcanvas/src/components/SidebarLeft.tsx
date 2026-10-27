@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { EdgeKind, LaneKind, NodeType, Route } from '../model/types';
 import { addLane, addNode, deleteLane, moveLane, runSentence, targetLane } from '../store/actions';
 import { setState, useStore } from '../store/flowStore';
+import { DRAG_TYPE } from './Canvas';
 import { NodeIcon } from './Icons';
 
 const PALETTE: { type: NodeType; title: string; sub: string; wide?: boolean; icon?: boolean }[] = [
@@ -46,9 +47,9 @@ function LaneList({ kind }: { kind: LaneKind }) {
             {l.name}
           </span>
           <span className="ops">
-            <button className="icon sm" title="上へ" onClick={() => moveLane(l.id, -1)}>↑</button>
-            <button className="icon sm" title="下へ" onClick={() => moveLane(l.id, 1)}>↓</button>
-            <button className="icon sm" title="削除" onClick={() => deleteLane(l.id)}>×</button>
+            <button className="icon sm" title="上へ" aria-label={`${l.name}を上へ`} onClick={() => moveLane(l.id, -1)}>↑</button>
+            <button className="icon sm" title="下へ" aria-label={`${l.name}を下へ`} onClick={() => moveLane(l.id, 1)}>↓</button>
+            <button className="icon sm" title="削除" aria-label={`${l.name}の枠を削除`} onClick={() => deleteLane(l.id)}>×</button>
           </span>
         </div>
       ))}
@@ -79,7 +80,7 @@ function PlaceHint() {
     <p className="hint place" role="status">
       {text}
       <br />
-      置いた後はドラッグで別の枠へ動かせます。
+      部品をキャンバスへドラッグすると、好きな所に置けます。
     </p>
   );
 }
@@ -108,8 +109,8 @@ function ConnectSection() {
         </button>
       </div>
       <div className="field">
-        <label>これから引く線</label>
-        <select value={edgeKind} onChange={(e) => setState({ edgeKind: e.target.value as EdgeKind })}>
+        <label htmlFor="edge-kind">これから引く線</label>
+        <select id="edge-kind" value={edgeKind} onChange={(e) => setState({ edgeKind: e.target.value as EdgeKind })}>
           <option value="flow">業務の流れ（実線）</option>
           <option value="data">データの流れ（点線）</option>
         </select>
@@ -139,7 +140,11 @@ function ConnectSection() {
         <button className="primary sm" style={{ marginTop: 6, alignSelf: 'flex-start' }} onClick={run}>
           実行（Enter）
         </button>
-        {msg && <p className={`msg ${msg.ok ? 'ok' : 'ng'}`}>{msg.message}</p>}
+        {msg && (
+          <p className={`msg ${msg.ok ? 'ok' : 'ng'}`} role={msg.ok ? 'status' : 'alert'}>
+            {msg.message}
+          </p>
+        )}
         <p className="hint" style={{ marginTop: 6 }}>
           部品の名前を2つ書きます。「AからBへ」で向きが決まります。
           <br />
@@ -172,11 +177,23 @@ export function SidebarLeft() {
         <h3>② 部品を置く</h3>
         <div className="palette">
           {PALETTE.map((p) => (
-            <div key={p.type} className={`pal${p.wide ? ' wide' : ''}${p.icon ? ' small' : ''}`} onClick={() => addNode(p.type)}>
+            <button
+              key={p.type}
+              type="button"
+              className={`pal${p.wide ? ' wide' : ''}${p.icon ? ' small' : ''}`}
+              aria-label={`${p.title}を置く（${p.sub}）`}
+              title="クリックで置く／キャンバスへドラッグして好きな所に置く"
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(DRAG_TYPE, p.type);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              onClick={() => addNode(p.type)}
+            >
               {p.icon && <NodeIcon type={p.type} size={26} />}
               <b>{p.title}</b>
               <span>{p.sub}</span>
-            </div>
+            </button>
           ))}
         </div>
         <PlaceHint />

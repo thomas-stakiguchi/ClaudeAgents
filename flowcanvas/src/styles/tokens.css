@@ -1,6 +1,6 @@
 /* モックの :root をそのまま移植 */
 :root{
-  --bg:#f5f4ef; --panel:#fffdf8; --fg:#1d2126; --muted:#5f646c; --line:#d9d6cc; --field-line:#9e9a8e; --on-accent:#fff;
+  --bg:#f5f4ef; --panel:#fffdf8; --fg:#1d2126; --muted:#5f646c; --line:#d9d6cc; --field-line:#8a867b; --on-accent:#fff;
   --accent:#2f6fde; --accent-soft:#e3ecfb;
   --lane-actor:#faf8f2; --lane-sys:#eef3f8; --lane-head:#efece3; --lane-head-sys:#dfe8f1;
   --node:#ffffff; --node-line:#868c94; --data:#eaf4ff; --data-line:#4d8fd6;
@@ -9,13 +9,13 @@
   --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#a3a9b2; --line:#2f353d; --field-line:#56606b; --on-accent:#0f1722;
+  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#a3a9b2; --line:#2f353d; --field-line:#6b7580; --on-accent:#0f1722;
   --accent:#6b9cf0; --accent-soft:#223253;
   --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
   --node:#262b32; --node-line:#76808c; --data:#1f2d3f; --data-line:#6b9cf0;
   --flow:#d4d8de; --sel:#e0a800; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#a3a9b2; --line:#2f353d; --field-line:#56606b; --on-accent:#0f1722;
+  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#a3a9b2; --line:#2f353d; --field-line:#6b7580; --on-accent:#0f1722;
   --accent:#6b9cf0; --accent-soft:#223253;
   --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
   --node:#262b32; --node-line:#76808c; --data:#1f2d3f; --data-line:#6b9cf0;

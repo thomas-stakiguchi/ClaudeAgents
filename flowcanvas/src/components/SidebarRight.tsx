@@ -24,11 +24,21 @@ export function SidebarRight() {
             <h3>部品</h3>
             <div className="field">
               <label htmlFor="p-label">名前</label>
-              <textarea id="p-label" value={n.label} onChange={(e) => set((d) => void (d.label = e.target.value), `label:${n.id}`)} />
+              <textarea
+                id="p-label"
+                value={n.label}
+                onKeyDown={(e) => {
+                  // Enter で確定（入力欄から出る）。改行は Shift+Enter
+                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    e.stopPropagation(); // 同じ Enter で「部品の上で名前を書く」が始まらないように
+                    e.currentTarget.blur();
+                  }
+                }} onChange={(e) => set((d) => void (d.label = e.target.value), `label:${n.id}`)} />
             </div>
             <div className="field">
-              <label>種類</label>
-              <select value={n.type} onChange={(e) => set((d) => { d.type = e.target.value as NodeType; clampNode(d, flow.lanes); })}>
+              <label htmlFor="p-type">種類</label>
+              <select id="p-type" value={n.type} onChange={(e) => set((d) => { d.type = e.target.value as NodeType; clampNode(d, flow.lanes); })}>
                 <option value="start">開始</option>
                 <option value="end">終了</option>
                 <option value="task">作業</option>
@@ -45,16 +55,16 @@ export function SidebarRight() {
               </select>
             </div>
             <div className="field">
-              <label>置く枠</label>
-              <select value={n.lane} onChange={(e) => set((d) => { d.lane = e.target.value; clampNode(d, flow.lanes); })}>
+              <label htmlFor="p-lane">置く枠</label>
+              <select id="p-lane" value={n.lane} onChange={(e) => set((d) => { d.lane = e.target.value; clampNode(d, flow.lanes); })}>
                 {flow.lanes.map((l) => (
                   <option key={l.id} value={l.id}>{l.name}</option>
                 ))}
               </select>
             </div>
             <div className="field">
-              <label>メモ（図には出ません）</label>
-              <textarea value={n.note ?? ''} onChange={(e) => set((d) => void (d.note = e.target.value), `note:${n.id}`)} />
+              <label htmlFor="p-note">メモ（図には出ません）</label>
+              <textarea id="p-note" value={n.note ?? ''} onChange={(e) => set((d) => void (d.note = e.target.value), `note:${n.id}`)} />
             </div>
             <button className="danger" onClick={deleteSel}>この部品を削除</button>
           </section>
@@ -112,8 +122,8 @@ export function SidebarRight() {
               <dt>先</dt><dd>{b?.label ?? '?'}</dd>
             </dl>
             <div className="field">
-              <label>種類</label>
-              <select value={e.kind} onChange={(ev) => set((d) => void (d.kind = ev.target.value as EdgeKind))}>
+              <label htmlFor="p-kind">種類</label>
+              <select id="p-kind" value={e.kind} onChange={(ev) => set((d) => void (d.kind = ev.target.value as EdgeKind))}>
                 <option value="flow">業務の流れ（実線）</option>
                 <option value="data">データの流れ（点線）</option>
               </select>
@@ -197,15 +207,15 @@ export function SidebarRight() {
               <input type="text" id="p-lane-name" value={l.name} onChange={(e) => set((d) => void (d.name = e.target.value), `lname:${l.id}`)} />
             </div>
             <div className="field">
-              <label>区分</label>
-              <select value={l.kind} onChange={(e) => setLaneKind(l.id, e.target.value as LaneKind)}>
+              <label htmlFor="p-lane-kind">区分</label>
+              <select id="p-lane-kind" value={l.kind} onChange={(e) => setLaneKind(l.id, e.target.value as LaneKind)}>
                 <option value="actor">担当者（人・部署）</option>
                 <option value="system">関連システム</option>
               </select>
             </div>
             <div className="field">
-              <label>説明</label>
-              <textarea value={l.desc ?? ''} onChange={(e) => set((d) => void (d.desc = e.target.value), `ldesc:${l.id}`)} />
+              <label htmlFor="p-lane-desc">説明</label>
+              <textarea id="p-lane-desc" value={l.desc ?? ''} onChange={(e) => set((d) => void (d.desc = e.target.value), `ldesc:${l.id}`)} />
             </div>
             <div className="field">
               <label>高さ</label>

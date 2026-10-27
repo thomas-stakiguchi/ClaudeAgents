@@ -31,7 +31,7 @@ h3{margin:0 0 8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;c
 .row .ops{display:flex;gap:2px}
 .palette{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
 .pal{grid-column:span 3}.pal.wide{grid-column:1/-1}.pal.small{grid-column:span 2;padding:6px 2px}
-.pal{border:1px dashed var(--field-line);border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;background:var(--bg)}
+.pal{display:block;width:100%;font:inherit;color:inherit;border:1px dashed var(--field-line);border-radius:8px;padding:8px 6px;text-align:center;cursor:pointer;background:var(--bg)}
 .pal:hover{border-color:var(--accent);color:var(--accent)}
 .pal b{display:block;font-size:12px}
 .pal span{font-size:11px;color:var(--muted)}
@@ -160,3 +160,13 @@ details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:va
 .lane-resize:hover{background:color-mix(in srgb,var(--accent) 35%,transparent)}
 .world.exporting .lane-size,.world.exporting .lane-resize{display:none}
 .lane-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* 図が空のときの案内 */
+.empty-guide{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);max-width:420px;background:var(--panel);border:1px solid var(--field-line);border-radius:10px;padding:18px 20px;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.12);z-index:6}
+.empty-guide b{font-size:15px}
+.empty-guide p{margin:8px 0 12px;color:var(--muted);line-height:1.6}
+.empty-guide.small{top:auto;bottom:24px;transform:translateX(-50%);pointer-events:none}
+.empty-guide.small p{margin-bottom:0}
+/* 横に動かしたときに左端に残す枠の名前 */
+.lane.sticky{width:120px;z-index:3;box-shadow:3px 0 8px rgba(0,0,0,.12)}
+button.icon{min-width:24px;min-height:24px}
+.check-row{display:flex;align-items:center;gap:8px;font-size:12px}
