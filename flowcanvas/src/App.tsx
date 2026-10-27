@@ -5,12 +5,16 @@ import { Canvas } from './components/Canvas';
 import { SidebarLeft } from './components/SidebarLeft';
 import { SidebarRight } from './components/SidebarRight';
 import { saveWithMessage, Toolbar } from './components/Toolbar';
+import { STANDALONE } from './store/localApi';
 
 export function App() {
   useEffect(() => {
     loadFlows().catch((e) => {
       console.error(e);
-      setState({ saveState: 'error', flash: 'サーバーに繋がりません（npm run dev で起動していますか？）' });
+      setState({
+        saveState: 'error',
+        flash: STANDALONE ? 'ブラウザに保存できません（保存が許可されていない設定かもしれません）' : 'サーバーに繋がりません（npm run dev で起動していますか？）',
+      });
     });
   }, []);
 

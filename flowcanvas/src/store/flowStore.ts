@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { produce, type Draft } from 'immer';
 import { loadAskFile } from '../export/fileSave';
+import { localApi, STANDALONE } from './localApi';
 import type { ExportOptions } from '../export/options';
 import type { Flow, FlowSummary, EdgeKind, Route } from '../model/types';
 
@@ -90,6 +91,7 @@ export function useStore<T>(selector: (s: State) => T): T {
 
 /* ---------- API ---------- */
 async function api<T>(method: string, url: string, body?: unknown): Promise<T> {
+  if (STANDALONE) return localApi<T>(method, url, body);
   const res = await fetch(url, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
@@ -136,6 +138,14 @@ export async function flushSave() {
 window.addEventListener('pagehide', () => {
   const flow = state.flow;
   if (!flow || state.saveState === 'saved') return;
+  if (STANDALONE) {
+    try {
+      localApi('PUT', `/api/flows/${flow.id}`, flow);
+    } catch {
+      /* 閉じる直前なので知らせられない */
+    }
+    return;
+  }
   fetch(`/api/flows/${flow.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
