@@ -373,16 +373,21 @@ export function Canvas() {
       {flow && !exporting && !flow.lanes.length && (
         <div className="empty-guide" role="note">
           <b>はじめに、枠を作ります</b>
-          <p>左の「① 枠を作る」で、作業をする人や部署（担当者）を追加してください。</p>
-          <button className="primary" onPointerDown={(e) => e.stopPropagation()} onClick={() => addLane('actor')}>
-            担当者の枠を追加する
-          </button>
+          <p>左の「1 枠を作る」で、作業をする人や部署（担当者）を追加してください。</p>
+          <div className="guide-actions" onPointerDown={(e) => e.stopPropagation()}>
+            <button className="btn primary" onClick={() => addLane('actor')}>
+              担当者の枠を追加する
+            </button>
+            <button className="btn link" onClick={() => setState({ modal: 'guide' })}>
+              操作ガイドを見る
+            </button>
+          </div>
         </div>
       )}
       {flow && !exporting && flow.lanes.length > 0 && !flow.nodes.length && (
         <div className="empty-guide small" role="note">
           <b>次に、部品を置きます</b>
-          <p>左の「② 部品を置く」の部品をクリックするか、ここへドラッグしてください。</p>
+          <p>左の「2 部品を置く」の部品を、ここへドラッグしてください。</p>
         </div>
       )}
       {flashMsg && (

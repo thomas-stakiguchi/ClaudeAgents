@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "tsBuildInfoFile": "./node_modules/.tmp/node.tsbuildinfo"
   },
-  "include": ["server", "scripts", "vite.config.ts", "src/model"]
+  "include": ["server", "scripts", "vite.config.ts", "src/model", "src/import"]
 }

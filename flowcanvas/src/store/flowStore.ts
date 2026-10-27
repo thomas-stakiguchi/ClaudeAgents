@@ -27,6 +27,7 @@ export type State = {
   exporting: false | ExportOptions; // 画像書き出し中は選択枠やポートを消し、設定に合わせて見出しなどを出す
   flash: string | null;
   confirmDel: string | null; // 2回押しで削除するときの1回目の対象（レーン id か 'flow'）
+  modal: 'export' | 'import' | 'guide' | null; // 開いている小窓
 };
 
 const HISTORY_MAX = 50;
@@ -48,6 +49,7 @@ let state: State = {
   exporting: false,
   flash: null,
   confirmDel: null,
+  modal: null,
 };
 
 /* これから引く線の種類・形はブラウザに覚えておく */
