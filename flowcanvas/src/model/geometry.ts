@@ -1,4 +1,4 @@
-import { HEAD_W, LANE_H, MIN_WORLD_W, nodeSize, type Edge, type Flow, type Node, type Side } from './types';
+import { HEAD_W, LANE_H, LANE_H_MAX, LANE_H_MIN, MIN_WORLD_W, nodeSize, type Edge, type Flow, type Lane, type Node, type Side } from './types';
 
 export type Rect = { x: number; y: number; w: number; h: number; cx: number; cy: number };
 
@@ -8,14 +8,39 @@ export function nodeRect(n: Node, laneTop: number): Rect {
   return { x: n.x, y, w, h, cx: n.x + w / 2, cy: y + h / 2 };
 }
 
-/** レーン id → 上端 y */
-export function laneTops(flow: Flow): Map<string, number> {
-  return new Map(flow.lanes.map((l, i) => [l.id, i * LANE_H]));
+export const laneHeight = (l: Pick<Lane, 'h'>) => l.h ?? LANE_H;
+export const clampLaneH = (h: number) => Math.min(LANE_H_MAX, Math.max(LANE_H_MIN, Math.round(h / 10) * 10));
+
+/** レーン id → 上端 y（上の枠の高さを順に足す） */
+export function laneTops(flow: Pick<Flow, 'lanes'>): Map<string, number> {
+  let y = 0;
+  return new Map(
+    flow.lanes.map((l) => {
+      const top = y;
+      y += laneHeight(l);
+      return [l.id, top];
+    }),
+  );
 }
 
-export function clampNode(n: Node) {
+export const totalHeight = (flow: Pick<Flow, 'lanes'>) => flow.lanes.reduce((t, l) => t + laneHeight(l), 0);
+
+/** 縦の位置 y にある枠の番号（範囲の外なら端の枠） */
+export function laneIndexAt(lanes: Pick<Lane, 'h'>[], y: number) {
+  let top = 0;
+  for (let i = 0; i < lanes.length; i++) {
+    top += laneHeight(lanes[i]);
+    if (y < top) return i;
+  }
+  return lanes.length - 1;
+}
+
+/** 部品を枠の中に収める（枠の高さが分かるよう lanes も渡す） */
+export function clampNode(n: Node, lanes: Pick<Lane, 'id' | 'h'>[]) {
   const [, h] = nodeSize(n.type);
-  n.ly = Math.max(8, Math.min(LANE_H - h - 8, n.ly));
+  const lane = lanes.find((l) => l.id === n.lane);
+  const lh = lane ? laneHeight(lane) : LANE_H;
+  n.ly = Math.max(8, Math.min(lh - h - 8, n.ly));
   n.x = Math.max(HEAD_W + 10, n.x);
 }
 
@@ -65,10 +90,12 @@ function orthoPath(p1: [number, number], s1: Side, p2: [number, number], s2: Sid
   const b: [number, number] = [p2[0] + NORMAL[s2][0] * GAP, p2[1] + NORMAL[s2][1] * GAP];
   const pts: [number, number][] = [p1, a];
   if (isH(s1) && isH(s2)) {
-    const mx = (a[0] + b[0]) / 2;
+    // 同じ向きの辺どうし（右と右など）は、両方より外側を回る
+    const mx = s1 !== s2 ? (a[0] + b[0]) / 2 : s1 === 'right' ? Math.max(a[0], b[0]) : Math.min(a[0], b[0]);
     pts.push([mx, a[1]], [mx, b[1]]);
   } else if (!isH(s1) && !isH(s2)) {
-    const my = (a[1] + b[1]) / 2;
+    // 上と上なら両方より上、下と下なら両方より下を回る（戻りの線が行きの線と重ならないように）
+    const my = s1 !== s2 ? (a[1] + b[1]) / 2 : s1 === 'bottom' ? Math.max(a[1], b[1]) : Math.min(a[1], b[1]);
     pts.push([a[0], my], [b[0], my]);
   } else if (isH(s1)) {
     pts.push([b[0], a[1]]);

@@ -1,6 +1,6 @@
-import { clampNode } from '../model/geometry';
-import type { Edge, EdgeKind, Lane, LaneKind, Node, NodeType, Side } from '../model/types';
-import { alignNodes, copySel, deleteLane, deleteSel, setLaneKind } from '../store/actions';
+import { clampNode, laneHeight } from '../model/geometry';
+import { LANE_H, LANE_H_MAX, LANE_H_MIN, type Edge, type EdgeKind, type Lane, type LaneKind, type Node, type NodeType, type Side } from '../model/types';
+import { alignNodes, copySel, deleteLane, deleteSel, resizeLane, setLaneHeight, setLaneKind } from '../store/actions';
 import { edit, useStore } from '../store/flowStore';
 import { ColorPicker } from './ColorPicker';
 
@@ -28,7 +28,7 @@ export function SidebarRight() {
             </div>
             <div className="field">
               <label>種類</label>
-              <select value={n.type} onChange={(e) => set((d) => { d.type = e.target.value as NodeType; clampNode(d); })}>
+              <select value={n.type} onChange={(e) => set((d) => { d.type = e.target.value as NodeType; clampNode(d, flow.lanes); })}>
                 <option value="start">開始</option>
                 <option value="end">終了</option>
                 <option value="task">作業</option>
@@ -46,7 +46,7 @@ export function SidebarRight() {
             </div>
             <div className="field">
               <label>置く枠</label>
-              <select value={n.lane} onChange={(e) => set((d) => { d.lane = e.target.value; clampNode(d); })}>
+              <select value={n.lane} onChange={(e) => set((d) => { d.lane = e.target.value; clampNode(d, flow.lanes); })}>
                 {flow.lanes.map((l) => (
                   <option key={l.id} value={l.id}>{l.name}</option>
                 ))}
@@ -206,6 +206,18 @@ export function SidebarRight() {
             <div className="field">
               <label>説明</label>
               <textarea value={l.desc ?? ''} onChange={(e) => set((d) => void (d.desc = e.target.value), `ldesc:${l.id}`)} />
+            </div>
+            <div className="field">
+              <label>高さ</label>
+              <div className="lane-h">
+                <button className="sm" onClick={() => resizeLane(l.id, -1)} disabled={laneHeight(l) <= LANE_H_MIN}>狭く</button>
+                <span className="status">{laneHeight(l)}px</span>
+                <button className="sm" onClick={() => resizeLane(l.id, 1)} disabled={laneHeight(l) >= LANE_H_MAX}>広く</button>
+                {l.h !== undefined && l.h !== LANE_H && (
+                  <button className="sm" onClick={() => setLaneHeight(l.id, LANE_H)}>元の高さ</button>
+                )}
+              </div>
+              <p className="hint" style={{ marginTop: 4 }}>枠の下の境目をドラッグしても変えられます。</p>
             </div>
             <p className="hint" style={{ marginBottom: 10 }}>この枠の部品：{cnt} 個</p>
             <button className="danger" onClick={() => deleteLane(l.id)}>この枠を削除</button>

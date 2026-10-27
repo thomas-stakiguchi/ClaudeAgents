@@ -5,7 +5,7 @@ export type NodeType =
   | 'note';
 export type EdgeKind = 'flow' | 'data';
 
-export type Lane = { id: string; kind: LaneKind; name: string; desc?: string };
+export type Lane = { id: string; kind: LaneKind; name: string; desc?: string; h?: number /* 枠の高さ。未設定なら LANE_H */ };
 export type Node = {
   id: string;
   type: NodeType;
@@ -32,6 +32,9 @@ export type Flow = { id: string; title: string; lanes: Lane[]; nodes: Node[]; ed
 export type FlowSummary = Pick<Flow, 'id' | 'title' | 'updatedAt'>;
 
 export const LANE_H = 150;
+export const LANE_H_MIN = 100;
+export const LANE_H_MAX = 800;
+export const LANE_H_STEP = 50;
 export const HEAD_W = 120;
 export const MIN_WORLD_W = 2600;
 

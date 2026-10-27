@@ -9,9 +9,13 @@
     "dev:web": "vite",
     "build": "tsc -b && vite build",
     "start": "tsx server/index.ts",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "import": "tsx scripts/flow-import.ts",
+    "template": "tsx scripts/flow-template.ts",
+    "dump": "tsx scripts/xlsx-dump.ts"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "express": "^4.22.3",
     "html-to-image": "^1.11.13",
     "immer": "^11.2.9",

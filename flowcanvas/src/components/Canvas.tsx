@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { clampNode, laneTops, nodeRect, portPoint, worldWidth, contentRight, type Port } from '../model/geometry';
+import { clampNode, laneHeight, laneIndexAt, laneTops, nodeRect, portPoint, totalHeight, worldWidth, contentRight, type Port } from '../model/geometry';
 import { LANE_H, nodeSize, type Node, type Side } from '../model/types';
-import { connect, selectNodes, startEdit } from '../store/actions';
+import { connect, selectNodes, setLaneHeight, startEdit } from '../store/actions';
 import { beginGesture, editSilent, getState, selectedNodeIds, setState, useStore, type View } from '../store/flowStore';
 import { EdgeLayer } from './EdgeLayer';
 import { ExportHeader } from './ExportHeader';
@@ -21,6 +21,7 @@ type Drag =
   | { type: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
   | { type: 'node'; starts: { id: string; x: number; y: number }[]; wx: number; wy: number; sx: number; sy: number; moved: boolean }
   | { type: 'link'; sx: number; sy: number; moved: boolean }
+  | { type: 'laneh'; id: string; h0: number; sx: number; sy: number; moved: boolean }
   | { type: 'box'; wx: number; wy: number; sx: number; sy: number; add: boolean; moved: boolean };
 
 export function Canvas() {
@@ -44,7 +45,7 @@ export function Canvas() {
   const lanes = flow?.lanes, nodes = flow?.nodes;
   const tops = useMemo(() => (flow ? laneTops(flow) : new Map<string, number>()), [lanes]); // eslint-disable-line react-hooks/exhaustive-deps
   const width = useMemo(() => (flow ? worldWidth(flow) : 0), [nodes]); // eslint-disable-line react-hooks/exhaustive-deps
-  const height = Math.max(1, lanes?.length ?? 0) * LANE_H;
+  const height = lanes?.length ? totalHeight({ lanes }) : LANE_H;
 
   const toWorld = (cx: number, cy: number): [number, number] => {
     const r = canvasRef.current!.getBoundingClientRect();
@@ -62,7 +63,7 @@ export function Canvas() {
     const el = canvasRef.current;
     if (!f || !el) return;
     const r = el.getBoundingClientRect();
-    const W = contentRight(f) + 40, H = Math.max(1, f.lanes.length) * LANE_H;
+    const W = contentRight(f) + 40, H = f.lanes.length ? totalHeight(f) : LANE_H;
     const whole = Math.min((r.width - 40) / W, (r.height - 40) / H);
     const k = mode === 'open' ? Math.min(1, Math.max(0.7, whole)) : Math.min(2, Math.max(K_MIN, whole));
     setState({ view: { x: 20, y: 20, k } });
@@ -110,8 +111,18 @@ export function Canvas() {
     const nodeEl = t.closest<HTMLElement>('.nwrap');
     const hit = t.closest<SVGPathElement>('path.hit');
     const head = t.closest<HTMLElement>('.lane .head');
+    const resize = t.closest<HTMLElement>('.lane-resize');
     const s = getState();
     const capture = () => canvasRef.current!.setPointerCapture(ev.pointerId);
+
+    if (t.closest('.lane-size')) return; // 枠の「広く／狭く」ボタンはクリックで動く
+    // 枠の下の境目：ドラッグで高さを変える
+    if (resize && !nodeEl && !port) {
+      const lane = s.flow!.lanes.find((l) => l.id === resize.dataset.lane)!;
+      drag.current = { type: 'laneh', id: lane.id, h0: laneHeight(lane), sx: ev.clientX, sy: ev.clientY, moved: false };
+      capture();
+      return;
+    }
 
     // 接続中：相手の部品をクリックで確定
     if (s.connectSrc && nodeEl) {
@@ -180,6 +191,15 @@ export function Canvas() {
       if (far) d.moved = true;
       return;
     }
+    if (d.type === 'laneh') {
+      if (!d.moved) {
+        if (!far) return;
+        d.moved = true;
+        beginGesture();
+      }
+      setLaneHeight(d.id, d.h0 + (ev.clientY - d.sy) / getState().view.k, { silent: true });
+      return;
+    }
     if (d.type === 'box') {
       if (!d.moved && !far) return;
       d.moved = true;
@@ -196,15 +216,16 @@ export function Canvas() {
     const [wx, wy] = toWorld(ev.clientX, ev.clientY);
     const dx = Math.round((wx - d.wx) / 10) * 10, dy = Math.round((wy - d.wy) / 10) * 10; // 10px グリッドにスナップ
     editSilent((f) => {
+      const tp = laneTops(f);
       for (const st of d.starts) {
         const n = f.nodes.find((x) => x.id === st.id);
         if (!n) continue;
         n.x = st.x + dx;
         const absY = st.y + dy;
-        const li = Math.max(0, Math.min(f.lanes.length - 1, Math.floor((absY + nodeSize(n.type)[1] / 2) / LANE_H)));
-        n.lane = f.lanes[li].id;
-        n.ly = absY - li * LANE_H;
-        clampNode(n);
+        const lane = f.lanes[laneIndexAt(f.lanes, absY + nodeSize(n.type)[1] / 2)];
+        n.lane = lane.id;
+        n.ly = absY - (tp.get(lane.id) ?? 0);
+        clampNode(n, f.lanes);
       }
     });
   };
@@ -218,8 +239,8 @@ export function Canvas() {
       // 背景をクリックしただけなら、その場所の枠（レーン）を選ぶ。枠の外なら選択を外す
       const f = getState().flow;
       const [wx, wy] = toWorld(ev.clientX, ev.clientY);
-      const li = Math.floor(wy / LANE_H);
-      const lane = f && wx >= 0 && wx <= width && li >= 0 ? f.lanes[li] : undefined;
+      const inside = f && f.lanes.length && wx >= 0 && wx <= width && wy >= 0 && wy < totalHeight(f);
+      const lane = inside ? f.lanes[laneIndexAt(f.lanes, wy)] : undefined;
       setState({ sel: lane ? { kind: 'lane', id: lane.id } : null, connectSrc: null, confirmDel: null });
     }
     if (d.type === 'box') {
@@ -248,6 +269,7 @@ export function Canvas() {
     // pointerdown でキャンバスがポインターを掴むので、ev.target はキャンバス自体になる。
     // 実際にマウスの下にある要素を見る
     const t = document.elementFromPoint(ev.clientX, ev.clientY) ?? (ev.target as Element);
+    if (t.closest('.lane-size, .lane-resize')) return; // 「広く」を続けて押したときに名前の入力が始まらないように
     const nodeEl = t.closest<HTMLElement>('.nwrap');
     const head = t.closest<HTMLElement>('.lane .head');
     const hit = t.closest<SVGPathElement>('path.hit');

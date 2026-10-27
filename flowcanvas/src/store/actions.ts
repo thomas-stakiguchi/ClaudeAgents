@@ -1,9 +1,9 @@
-import { clampNode } from '../model/geometry';
+import { clampLaneH, clampNode, laneHeight } from '../model/geometry';
 import { colorName } from '../model/colors';
 import { parseConnect } from '../model/nlConnect';
-import { HEAD_W, LANE_H, nodeSize, uid, type Edge, type EdgeKind, type Flow, type LaneKind, type Node, type NodeType, type Route, type Side } from '../model/types';
+import { HEAD_W, LANE_H_STEP, nodeSize, uid, type Edge, type EdgeKind, type Flow, type LaneKind, type Node, type NodeType, type Route, type Side } from '../model/types';
 import type { Draft } from 'immer';
-import { edit, flash, getState, selectedNodeIds, setState, type Sel } from './flowStore';
+import { edit, editSilent, flash, getState, selectedNodeIds, setState, type Sel } from './flowStore';
 
 const sortLanes = (d: Draft<Flow>) => {
   // 担当者は上段、システムは下段（同じ区分の中の順番は保つ）
@@ -18,6 +18,24 @@ export function addLane(kind: LaneKind) {
   });
   setState({ sel: { kind: 'lane', id } });
   focusSoon('#p-lane-name', true); // 既定の名前を選んでおき、そのまま打てば置き換わるように
+}
+
+/** 枠の高さを変える。dir=+1 で広く、-1 で狭く（50px ずつ） */
+export function resizeLane(id: string, dir: 1 | -1) {
+  const lane = getState().flow?.lanes.find((l) => l.id === id);
+  if (lane) setLaneHeight(id, laneHeight(lane) + dir * LANE_H_STEP);
+}
+
+export function setLaneHeight(id: string, h: number, opts: { silent?: boolean } = {}) {
+  const apply = (d: Draft<Flow>) => {
+    const l = d.lanes.find((x) => x.id === id);
+    if (!l) return;
+    l.h = clampLaneH(h);
+    // 狭くしたときに部品がはみ出さないよう枠の中へ戻す
+    for (const n of d.nodes) if (n.lane === id) clampNode(n, d.lanes);
+  };
+  if (opts.silent) editSilent(apply);
+  else edit(apply, { coalesce: `laneh:${id}` });
 }
 
 export function setLaneKind(id: string, kind: LaneKind) {
@@ -77,12 +95,13 @@ export function addNode(type: NodeType) {
   if (!target) return flash('先に「① 枠を作る」で担当かシステムを追加してください');
   const laneId = target.id;
   const [, h] = nodeSize(type);
+  const lh = laneHeight(flow.lanes.find((l) => l.id === laneId)!);
   const inLane = flow.nodes.filter((n) => n.lane === laneId);
   const right = inLane.reduce((m, n) => Math.max(m, n.x + nodeSize(n.type)[0]), HEAD_W);
   const id = uid();
   edit((d) => {
-    const n = { id, type, lane: laneId, x: Math.round((right + 40) / 10) * 10, ly: Math.round((LANE_H - h) / 2), label: DEFAULT_LABEL[type] };
-    clampNode(n);
+    const n = { id, type, lane: laneId, x: Math.round((right + 40) / 10) * 10, ly: Math.round((lh - h) / 2), label: DEFAULT_LABEL[type] };
+    clampNode(n, d.lanes);
     d.nodes.push(n);
   });
   setState({ sel: { kind: 'node', id } });
@@ -247,9 +266,9 @@ export function alignNodes(kind: AlignKind) {
       if (kind === 'left') n.x = left;
       if (kind === 'right') n.x = right - nw;
       if (kind === 'center') n.x = snap(center - nw / 2);
-      if (kind === 'middle') n.ly = snap((LANE_H - nh) / 2); // それぞれの枠の中で上下の真ん中
+      if (kind === 'middle') n.ly = snap((laneHeight(d.lanes.find((l) => l.id === n.lane) ?? {}) - nh) / 2); // それぞれの枠の中で上下の真ん中
       if (kind === 'hspace') n.x = snap(c0 + step * order.get(n.id)! - nw / 2);
-      clampNode(n);
+      clampNode(n, d.lanes);
     }
   });
   // 同じ枠の部品を左右でそろえると重なってしまうので、気付けるように知らせる
