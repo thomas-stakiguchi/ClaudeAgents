@@ -32,6 +32,12 @@ const TYPE_WORDS: [string, NodeType][] = [
   ['付せん', 'note'], ['付箋', 'note'], ['メモ', 'note'],
 ];
 
+const LABEL_RES = [
+  /ラベル(?:は|を|に|が|:)?\s*[「『"]([^」』"]+)[」』"](?:と(?:書く|書いて|入れる|入れて|する|して)|に(?:する|して))?/,
+  /ラベル(?:は|を|に|が|:)\s*([^「『"。、,\n]+?)(?:と(?:書く|書いて|書き|入れる|入れて|入力|表示|する|して)|に(?:する|して)|で(?=[。、,\s]|$)|(?=[。、,\n])|$)/,
+  /[「『]([^」』]+)[」』]/,
+];
+
 const DATA_WORDS = ['点線', '破線', 'データの流れ', '点々'];
 const FLOW_WORDS = ['実線', '業務の流れ', '普通の線'];
 
@@ -41,8 +47,8 @@ export function parseConnect(text: string, nodes: Node[]): NlResult {
   // 読み取った部分は同じ長さの空白に置き換える（位置がずれないように）
   const blank = (s: string) => ' '.repeat(s.length);
 
-  // ラベル：「ラベルは〇〇」または 「〇〇」
-  const lm = rest.match(/ラベル(?:は|を|:)\s*[「『"]?([^」』"。、\n]+)[」』"]?/) ?? rest.match(/[「『]([^」』]+)[」』]/);
+  // ラベル：「ラベルは〇〇」「ラベルに〇〇と書く」「ラベルを〇〇にする」または 「〇〇」
+  const lm = LABEL_RES.map((re) => rest.match(re)).find((m) => m && m[1].trim());
   if (lm) {
     cmd.label = lm[1].trim();
     rest = rest.replace(lm[0], blank(lm[0]));
