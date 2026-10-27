@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { produce, type Draft } from 'immer';
+import type { ExportOptions } from '../export/options';
 import type { Flow, FlowSummary, EdgeKind, Route } from '../model/types';
 
 export type Sel = { kind: 'node' | 'edge' | 'lane'; id: string } | { kind: 'nodes'; ids: string[] } | null;
@@ -23,7 +24,7 @@ export type State = {
   saveState: SaveState;
   past: Flow[];
   future: Flow[];
-  exporting: boolean; // 画像書き出し中は選択枠やポートを消す
+  exporting: false | ExportOptions; // 画像書き出し中は選択枠やポートを消し、設定に合わせて見出しなどを出す
   flash: string | null;
   confirmDel: string | null; // 2回押しで削除するときの1回目の対象（レーン id か 'flow'）
 };

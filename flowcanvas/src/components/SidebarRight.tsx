@@ -45,7 +45,7 @@ export function SidebarRight() {
               </select>
             </div>
             <div className="field">
-              <label>レーン</label>
+              <label>置く枠</label>
               <select value={n.lane} onChange={(e) => set((d) => { d.lane = e.target.value; clampNode(d); })}>
                 {flow.lanes.map((l) => (
                   <option key={l.id} value={l.id}>{l.name}</option>
@@ -191,7 +191,7 @@ export function SidebarRight() {
       return (
         <aside className="side right">
           <section key={l.id}>
-            <h3>{l.kind === 'actor' ? 'Actor' : 'システム'}</h3>
+            <h3>{l.kind === 'actor' ? '担当者の枠' : 'システムの枠'}</h3>
             <div className="field">
               <label htmlFor="p-lane-name">名前</label>
               <input type="text" id="p-lane-name" value={l.name} onChange={(e) => set((d) => void (d.name = e.target.value), `lname:${l.id}`)} />
@@ -199,7 +199,7 @@ export function SidebarRight() {
             <div className="field">
               <label>区分</label>
               <select value={l.kind} onChange={(e) => setLaneKind(l.id, e.target.value as LaneKind)}>
-                <option value="actor">Actor（担当・部署）</option>
+                <option value="actor">担当者（人・部署）</option>
                 <option value="system">関連システム</option>
               </select>
             </div>
@@ -207,10 +207,10 @@ export function SidebarRight() {
               <label>説明</label>
               <textarea value={l.desc ?? ''} onChange={(e) => set((d) => void (d.desc = e.target.value), `ldesc:${l.id}`)} />
             </div>
-            <p className="hint" style={{ marginBottom: 10 }}>このレーンの部品：{cnt} 個</p>
-            <button className="danger" onClick={() => deleteLane(l.id)}>レーンを削除</button>
+            <p className="hint" style={{ marginBottom: 10 }}>この枠の部品：{cnt} 個</p>
+            <button className="danger" onClick={() => deleteLane(l.id)}>この枠を削除</button>
             {confirmDel === l.id && (
-              <p className="hint warn">部品が {cnt} 個あります。もう一度「レーンを削除」を押すと部品ごと消えます。</p>
+              <p className="hint warn">部品が {cnt} 個あります。もう一度「この枠を削除」を押すと部品ごと消えます。</p>
             )}
           </section>
         </aside>
@@ -223,7 +223,7 @@ export function SidebarRight() {
     <aside className="side right">
       <section>
         <h3>プロパティ</h3>
-        <p className="hint">部品・矢印・レーンをクリックすると、ここで編集できます。</p>
+        <p className="hint">部品・矢印・枠をクリックすると、ここで編集できます。</p>
       </section>
       <section>
         <h3>この図</h3>
@@ -232,7 +232,7 @@ export function SidebarRight() {
           <input type="text" id="p-title" value={flow.title} onChange={(e) => edit((d) => void (d.title = e.target.value), { coalesce: 'title' })} />
         </div>
         <dl className="kv">
-          <dt>Actor</dt><dd>{count('actor')}</dd>
+          <dt>担当者</dt><dd>{count('actor')}</dd>
           <dt>システム</dt><dd>{count('system')}</dd>
           <dt>部品</dt><dd>{flow.nodes.length}</dd>
           <dt>業務の矢印</dt><dd>{flow.edges.filter((e) => e.kind === 'flow').length}</dd>

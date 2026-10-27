@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
 } from '../store/flowStore';
+import { loadExportOptions, saveExportOptions, type ExportOptions } from '../export/options';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
 import { ExportModal, ImportModal } from './ExportModal';
@@ -37,15 +38,24 @@ export function Toolbar() {
     const flow = getState().flow;
     if (!flow || !canvasApi.world || busy) return;
     setBusy(true);
-    setState({ exporting: true }); // 選択枠・ポートを消してから撮る
+    const o = loadExportOptions();
+    // 白い背景で出すときは、ダークモードでも一時的にライトの色にする
+    const root = document.documentElement;
+    const prevTheme = root.getAttribute('data-theme');
+    if (o.plain) root.setAttribute('data-theme', 'light');
+    setState({ exporting: o }); // 選択枠・ポートを消し、見出しを出してから撮る
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     try {
       const { exportImage } = await import('../export/image'); // 重いので使うときだけ読む
-      await exportImage(canvasApi.world, flow, kind);
+      await exportImage(canvasApi.world, flow, kind, o);
     } catch (e) {
       console.error(e);
       flash('画像の書き出しに失敗しました');
     } finally {
+      if (o.plain) {
+        if (prevTheme) root.setAttribute('data-theme', prevTheme);
+        else root.removeAttribute('data-theme');
+      }
       setState({ exporting: false });
       setBusy(false);
     }
@@ -132,6 +142,12 @@ const EXPORT_ITEMS: { v: ExportKind; label: string }[] = [
 /** 書き出しメニュー。プルダウンだと矢印キーで動かしただけで実行されるので、ボタン＋メニューにしている */
 function ExportMenu({ busy, onPick }: { busy: boolean; onPick: (v: ExportKind) => void }) {
   const [open, setOpen] = useState(false);
+  const [opts, setOpts] = useState<ExportOptions>(loadExportOptions);
+  const toggle = (k: keyof ExportOptions) => {
+    const next = { ...opts, [k]: !opts[k] };
+    setOpts(next);
+    saveExportOptions(next);
+  };
   const wrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -153,7 +169,7 @@ function ExportMenu({ busy, onPick }: { busy: boolean; onPick: (v: ExportKind) =
     }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const items = [...(wrap.current?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])];
+    const items = [...(wrap.current?.querySelectorAll<HTMLButtonElement>('[role^=menuitem]') ?? [])];
     const i = items.indexOf(document.activeElement as HTMLButtonElement);
     items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
   };
@@ -177,6 +193,14 @@ function ExportMenu({ busy, onPick }: { busy: boolean; onPick: (v: ExportKind) =
               {it.label}
             </button>
           ))}
+          <div className="menu-sep" role="separator" />
+          <div className="menu-note">画像・PDF の設定（選んでも閉じません）</div>
+          <button role="menuitemcheckbox" aria-checked={opts.header} onClick={() => toggle('header')}>
+            <span className="check">{opts.header ? '☑' : '☐'}</span>タイトル・出力日・凡例を入れる
+          </button>
+          <button role="menuitemcheckbox" aria-checked={opts.plain} onClick={() => toggle('plain')}>
+            <span className="check">{opts.plain ? '☑' : '☐'}</span>白い背景・マス目なし（印刷向け）
+          </button>
         </div>
       )}
     </div>

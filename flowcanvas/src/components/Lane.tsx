@@ -3,7 +3,7 @@ import { LANE_H, type Lane as LaneT } from '../model/types';
 
 type Props = { lanes: LaneT[]; width: number; selId: string | null };
 
-/** レーン一式と DATA LAYER の区切り線 */
+/** レーン一式と、担当者とシステムの区切り線 */
 export const LaneLayer = memo(function LaneLayer({ lanes, width, selId }: Props) {
   const si = lanes.findIndex((l) => l.kind === 'system');
   return (
@@ -13,7 +13,7 @@ export const LaneLayer = memo(function LaneLayer({ lanes, width, selId }: Props)
       ))}
       {si > 0 && (
         <div className="divider" style={{ top: si * LANE_H, width }}>
-          <span>DATA LAYER</span>
+          <span>ここから下はシステム（データの置き場所）</span>
         </div>
       )}
     </div>
@@ -24,7 +24,7 @@ const Lane = memo(function Lane({ lane, top, width, selected }: { lane: LaneT; t
   return (
     <div className={`lane ${lane.kind}${selected ? ' sel' : ''}`} style={{ top, width, height: LANE_H }}>
       <div className="head" data-lane={lane.id} title={lane.desc || undefined}>
-        <small>{lane.kind === 'actor' ? 'ACTOR' : 'SYSTEM'}</small>
+        <small>{lane.kind === 'actor' ? '担当者' : 'システム'}</small>
         <div>{lane.name}</div>
       </div>
       <div className="body" />

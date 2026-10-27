@@ -78,7 +78,7 @@ const SEL_HALO: React.CSSProperties = { fill: 'none', stroke: 'var(--sel)', stro
 
 const TEXT_STYLE: React.CSSProperties = {
   fontFamily: 'var(--font)',
-  fontSize: 11,
+  fontSize: 12,
   fill: 'var(--fg)',
   paintOrder: 'stroke',
   stroke: 'var(--bg)',

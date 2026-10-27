@@ -6,7 +6,7 @@ import type { Draft } from 'immer';
 import { edit, flash, getState, selectedNodeIds, setState, type Sel } from './flowStore';
 
 const sortLanes = (d: Draft<Flow>) => {
-  // Actor は上段、システムは下段（同じ区分の中の順番は保つ）
+  // 担当者は上段、システムは下段（同じ区分の中の順番は保つ）
   d.lanes.sort((a, b) => Number(a.kind === 'system') - Number(b.kind === 'system'));
 };
 

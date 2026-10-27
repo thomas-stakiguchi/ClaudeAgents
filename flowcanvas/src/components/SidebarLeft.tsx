@@ -160,7 +160,7 @@ export function SidebarLeft() {
       <section>
         <h3>① 枠を作る</h3>
         <div className="subhead">
-          Actor（担当）<button className="sm" onClick={() => addLane('actor')}>＋ 追加</button>
+          担当者（人・部署）<button className="sm" onClick={() => addLane('actor')}>＋ 追加</button>
         </div>
         <LaneList kind="actor" />
         <div className="subhead" style={{ marginTop: 10 }}>
