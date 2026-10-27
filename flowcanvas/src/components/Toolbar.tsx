@@ -3,6 +3,7 @@ import {
   createFlow, createSampleFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
   type State,
 } from '../store/flowStore';
+import { saveAskFile, saveFlowFile } from '../export/fileSave';
 import { loadExportOptions, saveExportOptions, type ExportOptions } from '../export/options';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
@@ -11,12 +12,15 @@ import { ConfirmDelete } from './ConfirmDelete';
 import { ExportModal } from './ExportModal';
 import { GuideModal } from './GuideModal';
 import { ImportModal } from './ImportModal';
+import { SaveNote } from './SaveNote';
 
 const SAVE_LABEL = { saved: '保存済', dirty: '未保存', saving: '保存中…', error: '保存できませんでした' } as const;
 
 export async function saveWithMessage() {
   const ok = await saveNow();
-  flash(ok ? '保存しました' : '保存できませんでした。npm run dev が動いているか確認してください');
+  if (!ok) flash('保存できませんでした。npm run dev が動いているか確認してください');
+  else if (getState().askFile) setState({ saveNote: true });
+  else flash('保存しました');
 }
 
 export function Toolbar() {
@@ -72,6 +76,17 @@ export function Toolbar() {
     }
   };
 
+  const askFile = useStore((s) => s.askFile);
+  const toFile = async () => {
+    const f = getState().flow;
+    if (!f) return;
+    try {
+      const name = await saveFlowFile(f);
+      if (name) flash(`ファイルに保存しました：${name}`);
+    } catch {
+      flash('ファイルに保存できませんでした');
+    }
+  };
   const onDeleteFlow = () => setState({ confirmDel: 'flow' });
 
   const themeItem = (t: Theme, label: string) => ({
@@ -97,6 +112,16 @@ export function Toolbar() {
     { label: 'この図を複製', onSelect: () => void duplicateFlow() },
     { label: 'この図を削除…', danger: true, onSelect: onDeleteFlow },
     { label: 'サンプルの図を開く', onSelect: () => void createSampleFlow() },
+    { label: 'ファイルに保存…', onSelect: () => void toFile() },
+    {
+      kind: 'check',
+      label: '保存のときにファイル保存もすすめる',
+      checked: askFile,
+      onToggle: () => {
+        saveAskFile(!askFile);
+        setState({ askFile: !askFile });
+      },
+    },
     { kind: 'sep' },
     { kind: 'note', label: '画面の明るさ' },
     themeItem('auto', '自動（PCの設定に合わせる）'),
@@ -139,9 +164,12 @@ export function Toolbar() {
         読み込み<span className="wide-only">（Excel・JSON）</span>
       </button>
       <DropMenu label={busy ? '書き出し中…' : '書き出し ▾'} items={exportItems} disabled={busy} />
-      <button className="btn primary" title="保存 (Ctrl+S)" disabled={saveState === 'saving'} onClick={() => void saveWithMessage()}>
-        保存
-      </button>
+      <span className="save-wrap">
+        <button className="btn primary" title="保存 (Ctrl+S)" disabled={saveState === 'saving'} onClick={() => void saveWithMessage()}>
+          保存
+        </button>
+        <SaveNote />
+      </span>
       <button className="btn link" onClick={() => setModal('guide')}>？ 操作ガイド</button>
       <DropMenu label="…" ariaLabel="そのほかの操作" className="icon ghost" items={moreItems} />
       {modal === 'export' && <ExportModal onClose={() => setModal(null)} />}

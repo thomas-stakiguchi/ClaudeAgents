@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { produce, type Draft } from 'immer';
+import { loadAskFile } from '../export/fileSave';
 import type { ExportOptions } from '../export/options';
 import type { Flow, FlowSummary, EdgeKind, Route } from '../model/types';
 
@@ -28,6 +29,8 @@ export type State = {
   flash: string | null;
   confirmDel: string | null; // 削除の確認を出している対象（レーン id か 'flow'）
   modal: 'export' | 'import' | 'guide' | null; // 開いている小窓
+  saveNote: boolean; // 保存の後の「ファイルにも残す」案内
+  askFile: boolean; // 保存のときに案内を出すか
 };
 
 const HISTORY_MAX = 50;
@@ -50,6 +53,8 @@ let state: State = {
   flash: null,
   confirmDel: null,
   modal: null,
+  saveNote: false,
+  askFile: loadAskFile(),
 };
 
 /* これから引く線の種類・形はブラウザに覚えておく */
