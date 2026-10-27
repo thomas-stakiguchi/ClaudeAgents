@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { EdgeKind, LaneKind, NodeType } from '../model/types';
-import { addLane, addNode, deleteLane, moveLane, runSentence } from '../store/actions';
+import { addLane, addNode, deleteLane, moveLane, runSentence, targetLane } from '../store/actions';
 import { setState, useStore } from '../store/flowStore';
 import { NodeIcon } from './Icons';
 
@@ -13,6 +13,11 @@ const PALETTE: { type: NodeType; title: string; sub: string; wide?: boolean; ico
   { type: 'excel', title: 'Excel', sub: '表計算', icon: true },
   { type: 'csv', title: 'CSV', sub: '一覧表', icon: true },
   { type: 'pc', title: 'PC', sub: '端末・画面', icon: true },
+  { type: 'mail', title: 'メール', sub: '通知・送付', icon: true },
+  { type: 'doc', title: '書類', sub: '帳票・紙', icon: true },
+  { type: 'person', title: '人', sub: '顧客など', icon: true },
+  { type: 'clock', title: '時計', sub: '定期・待ち', icon: true },
+  { type: 'note', title: '付せん', sub: '補足メモ', icon: true },
 ];
 
 function LaneList({ kind }: { kind: LaneKind }) {
@@ -48,6 +53,34 @@ function LaneList({ kind }: { kind: LaneKind }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** どの枠に置かれるかを先に見せる */
+function PlaceHint() {
+  const flow = useStore((s) => s.flow);
+  const sel = useStore((s) => s.sel);
+  if (!flow) return null;
+  const name = (id?: string) => flow.lanes.find((l) => l.id === id)?.name;
+  const task = targetLane(flow, sel, 'task');
+  const data = targetLane(flow, sel, 'data');
+  let text: React.ReactNode;
+  if (!task) text = '先に「① 枠を作る」で枠を追加してください。';
+  else if (task.chosen) text = <>置く先：<b>{name(task.id)}</b>（選んでいる枠）</>;
+  else
+    text = (
+      <>
+        置く先：作業などは<b>{name(task.id)}</b>、データ・Excel・CSV は<b>{name(data?.id)}</b>
+        <br />
+        別の枠に置くときは、先に枠をクリックして選んでください。
+      </>
+    );
+  return (
+    <p className="hint place" role="status">
+      {text}
+      <br />
+      置いた後はドラッグで別の枠へ動かせます。
+    </p>
   );
 }
 
@@ -141,9 +174,7 @@ export function SidebarLeft() {
             </div>
           ))}
         </div>
-        <p className="hint" style={{ marginTop: 8 }}>
-          クリックすると選択中のレーンに置かれます。ドラッグで別レーンへ移動できます。
-        </p>
+        <PlaceHint />
       </section>
       <ConnectSection />
       <details className="help">

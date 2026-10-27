@@ -175,7 +175,14 @@ export function Canvas() {
     drag.current = null;
     setDragging(false);
     if (!d) return;
-    if (d.type === 'pan' && !d.moved) setState({ sel: null, connectSrc: null, confirmDel: null });
+    if (d.type === 'pan' && !d.moved) {
+      // 背景をクリックしただけなら、その場所の枠（レーン）を選ぶ。枠の外なら選択を外す
+      const f = getState().flow;
+      const [wx, wy] = toWorld(ev.clientX, ev.clientY);
+      const li = Math.floor(wy / LANE_H);
+      const lane = f && wx >= 0 && wx <= width && li >= 0 ? f.lanes[li] : undefined;
+      setState({ sel: lane ? { kind: 'lane', id: lane.id } : null, connectSrc: null, confirmDel: null });
+    }
     if (d.type === 'link' && d.moved) {
       // ポートからドラッグして部品の上で離しても繋がる
       const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('.nwrap');
@@ -185,7 +192,9 @@ export function Canvas() {
   };
 
   const onDoubleClick = (ev: React.MouseEvent) => {
-    const t = ev.target as Element;
+    // pointerdown でキャンバスがポインターを掴むので、ev.target はキャンバス自体になる。
+    // 実際にマウスの下にある要素を見る
+    const t = document.elementFromPoint(ev.clientX, ev.clientY) ?? (ev.target as Element);
     const nodeEl = t.closest<HTMLElement>('.nwrap');
     const head = t.closest<HTMLElement>('.lane .head');
     const target = nodeEl ? '#p-label' : head ? '#p-lane-name' : null;

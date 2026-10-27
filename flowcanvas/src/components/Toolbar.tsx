@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
 } from '../store/flowStore';
@@ -80,35 +80,25 @@ export function Toolbar() {
         {confirmDel === 'flow' ? '本当に削除する' : '図を削除'}
       </button>
       <span className="sep" />
-      <button className="icon" title="取り消し (Ctrl+Z)" disabled={!canUndo} onClick={undo}>↶</button>
-      <button className="icon" title="やり直し (Ctrl+Shift+Z)" disabled={!canRedo} onClick={redo}>↷</button>
+      <button className="icon" title="取り消し (Ctrl+Z)" aria-label="取り消し" disabled={!canUndo} onClick={undo}>↶</button>
+      <button className="icon" title="やり直し (Ctrl+Shift+Z)" aria-label="やり直し" disabled={!canRedo} onClick={redo}>↷</button>
       <div className="spacer" />
       <span className={`status${saveState === 'error' ? ' err' : ''}`}>{SAVE_LABEL[saveState]}</span>
       <button className="sm primary" title="保存 (Ctrl+S)" disabled={saveState === 'saving'} onClick={() => void saveWithMessage()}>
         保存
       </button>
-      <button className="icon" onClick={() => zoomBy(1 / 1.2)}>−</button>
+      <button className="icon" title="縮小" aria-label="縮小" onClick={() => zoomBy(1 / 1.2)}>−</button>
       <span className="status">{Math.round(k * 100)}%</span>
-      <button className="icon" onClick={() => zoomBy(1.2)}>＋</button>
+      <button className="icon" title="拡大" aria-label="拡大" onClick={() => zoomBy(1.2)}>＋</button>
       <button className="sm" onClick={() => canvasApi.fit()}>全体表示</button>
       <span className="sep" />
-      <select
-        style={{ width: 'auto' }}
-        value=""
-        disabled={busy}
-        title="書き出し"
-        onChange={(e) => {
-          const v = e.target.value;
+      <ExportMenu
+        busy={busy}
+        onPick={(v) => {
           if (v === 'text') setModal('export');
-          else if (v) void onImage(v as 'png' | 'jpg' | 'pdf');
+          else void onImage(v);
         }}
-      >
-        <option value="">{busy ? '書き出し中…' : '書き出し…'}</option>
-        <option value="png">PNG</option>
-        <option value="jpg">JPG</option>
-        <option value="pdf">PDF</option>
-        <option value="text">テキスト</option>
-      </select>
+      />
       <button className="sm" onClick={() => setModal('import')}>読み込み</button>
       <button className="sm" onClick={() => void createSampleFlow()}>サンプルの図</button>
       <select
@@ -127,6 +117,68 @@ export function Toolbar() {
       </select>
       {modal === 'export' && <ExportModal onClose={() => setModal(null)} />}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+type ExportKind = 'png' | 'jpg' | 'pdf' | 'text';
+const EXPORT_ITEMS: { v: ExportKind; label: string }[] = [
+  { v: 'png', label: 'PNG（画像）' },
+  { v: 'jpg', label: 'JPG（画像）' },
+  { v: 'pdf', label: 'PDF' },
+  { v: 'text', label: 'テキスト（JSON・Mermaid・Markdown）…' },
+];
+
+/** 書き出しメニュー。プルダウンだと矢印キーで動かしただけで実行されるので、ボタン＋メニューにしている */
+function ExportMenu({ busy, onPick }: { busy: boolean; onPick: (v: ExportKind) => void }) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    wrap.current?.querySelector<HTMLButtonElement>('[role=menuitem]')?.focus();
+    const onDown = (e: PointerEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [open]);
+
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      setOpen(false);
+      wrap.current?.querySelector<HTMLButtonElement>('.menu-btn')?.focus();
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const items = [...(wrap.current?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])];
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+  };
+
+  return (
+    <div className="menu-wrap" ref={wrap} onKeyDown={onKey}>
+      <button className="sm menu-btn" aria-haspopup="menu" aria-expanded={open} disabled={busy} onClick={() => setOpen((o) => !o)}>
+        {busy ? '書き出し中…' : '書き出し ▾'}
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          {EXPORT_ITEMS.map((it) => (
+            <button
+              key={it.v}
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onPick(it.v);
+              }}
+            >
+              {it.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

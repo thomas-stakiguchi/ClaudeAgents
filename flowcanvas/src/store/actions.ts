@@ -3,7 +3,7 @@ import { colorName } from '../model/colors';
 import { parseConnect } from '../model/nlConnect';
 import { HEAD_W, LANE_H, nodeSize, uid, type EdgeKind, type Flow, type LaneKind, type NodeType } from '../model/types';
 import type { Draft } from 'immer';
-import { edit, flash, getState, setState } from './flowStore';
+import { edit, flash, getState, setState, type Sel } from './flowStore';
 
 const sortLanes = (d: Draft<Flow>) => {
   // Actor は上段、システムは下段（同じ区分の中の順番は保つ）
@@ -17,7 +17,7 @@ export function addLane(kind: LaneKind) {
     sortLanes(d);
   });
   setState({ sel: { kind: 'lane', id } });
-  focusSoon('#p-lane-name');
+  focusSoon('#p-lane-name', true); // 既定の名前を選んでおき、そのまま打てば置き換わるように
 }
 
 export function setLaneKind(id: string, kind: LaneKind) {
@@ -57,27 +57,31 @@ export function deleteLane(id: string) {
 
 const DEFAULT_LABEL: Record<NodeType, string> = {
   start: '開始', end: '終了', task: '作業', decision: '判断？', data: 'データ', excel: 'Excelファイル', csv: 'CSVファイル', pc: 'PC',
+  mail: 'メール', doc: '書類', person: '顧客', clock: '定期処理', note: 'メモ',
 };
 // システム側のレーンに置きたい部品（ファイル・データ）
 const SYSTEM_SIDE: NodeType[] = ['data', 'excel', 'csv'];
 
+/** 部品を置く枠。選んでいる枠 → 選んでいる部品の枠 → 種類ごとの既定（データ類は最初のシステム、それ以外は最初の担当） */
+export function targetLane(flow: Flow, sel: Sel, type: NodeType): { id: string; chosen: boolean } | null {
+  const chosen = sel?.kind === 'lane' ? sel.id : sel?.kind === 'node' ? flow.nodes.find((n) => n.id === sel.id)?.lane : undefined;
+  if (chosen) return { id: chosen, chosen: true };
+  const pref = flow.lanes.find((l) => l.kind === (SYSTEM_SIDE.includes(type) ? 'system' : 'actor')) ?? flow.lanes[0];
+  return pref ? { id: pref.id, chosen: false } : null;
+}
+
 export function addNode(type: NodeType) {
   const { flow, sel } = getState();
   if (!flow) return;
-  let laneId =
-    sel?.kind === 'lane' ? sel.id : sel?.kind === 'node' ? flow.nodes.find((n) => n.id === sel.id)?.lane : undefined;
-  if (!laneId) {
-    // 未選択なら最初のレーン。データ・Excel・CSV は最初のシステムレーン
-    const pref = flow.lanes.find((l) => l.kind === (SYSTEM_SIDE.includes(type) ? 'system' : 'actor')) ?? flow.lanes[0];
-    if (!pref) return flash('先にActorかシステムを追加してください');
-    laneId = pref.id;
-  }
+  const target = targetLane(flow, sel, type);
+  if (!target) return flash('先に「① 枠を作る」で担当かシステムを追加してください');
+  const laneId = target.id;
   const [, h] = nodeSize(type);
   const inLane = flow.nodes.filter((n) => n.lane === laneId);
   const right = inLane.reduce((m, n) => Math.max(m, n.x + nodeSize(n.type)[0]), HEAD_W);
   const id = uid();
   edit((d) => {
-    const n = { id, type, lane: laneId!, x: Math.round((right + 40) / 10) * 10, ly: Math.round((LANE_H - h) / 2), label: DEFAULT_LABEL[type] };
+    const n = { id, type, lane: laneId, x: Math.round((right + 40) / 10) * 10, ly: Math.round((LANE_H - h) / 2), label: DEFAULT_LABEL[type] };
     clampNode(n);
     d.nodes.push(n);
   });

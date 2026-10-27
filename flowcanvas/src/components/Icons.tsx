@@ -63,9 +63,69 @@ export function PcIcon({ size = 44 }: { size?: number }) {
   );
 }
 
+export function MailIcon({ size = 44 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 50 44" aria-hidden="true">
+      <rect x="3" y="7" width="44" height="30" rx="3" fill="#FFF7E6" stroke="#D9822B" strokeWidth="2" />
+      <path d="M4 9l21 16L46 9" fill="none" stroke="#D9822B" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function DocIcon({ size = 44 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 44 50" aria-hidden="true">
+      {/* 下の辺が波打った紙（フローチャートの「書類」の形） */}
+      <path d="M7 3h30v40c-5 4-10-3-15 0s-10 4-15 0z" fill="#fff" stroke="#8A6D3B" strokeWidth="1.6" />
+      <g stroke="#8A6D3B" strokeWidth="1.6" strokeLinecap="round">
+        <line x1="13" y1="12" x2="31" y2="12" />
+        <line x1="13" y1="19" x2="31" y2="19" />
+        <line x1="13" y1="26" x2="31" y2="26" />
+        <line x1="13" y1="33" x2="24" y2="33" />
+      </g>
+    </svg>
+  );
+}
+
+export function PersonIcon({ size = 44 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 44 44" aria-hidden="true">
+      <circle cx="22" cy="14" r="8" fill="#6B7FA8" />
+      <path d="M7 40c0-9 7-15 15-15s15 6 15 15z" fill="#6B7FA8" />
+    </svg>
+  );
+}
+
+export function ClockIcon({ size = 44 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 44 44" aria-hidden="true">
+      <circle cx="22" cy="22" r="18" fill="#fff" stroke="#5A626D" strokeWidth="2.5" />
+      <g stroke="#5A626D" strokeWidth="2.5" strokeLinecap="round">
+        <line x1="22" y1="22" x2="22" y2="11" />
+        <line x1="22" y1="22" x2="30" y2="26" />
+      </g>
+      <circle cx="22" cy="22" r="2" fill="#5A626D" />
+    </svg>
+  );
+}
+
+export function NoteIcon({ size = 44 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 44 44" aria-hidden="true">
+      <path d="M5 5h34v24L29 39H5z" fill="#FFE98A" stroke="#C9A227" strokeWidth="1.5" />
+      <path d="M39 29H29v10" fill="#F2D35B" stroke="#C9A227" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 export function NodeIcon({ type, size }: { type: NodeType; size?: number }) {
   if (type === 'excel') return <ExcelIcon size={size} />;
   if (type === 'csv') return <CsvIcon size={size} />;
   if (type === 'pc') return <PcIcon size={size} />;
+  if (type === 'mail') return <MailIcon size={size} />;
+  if (type === 'doc') return <DocIcon size={size} />;
+  if (type === 'person') return <PersonIcon size={size} />;
+  if (type === 'clock') return <ClockIcon size={size} />;
+  if (type === 'note') return <NoteIcon size={size} />;
   return null;
 }
