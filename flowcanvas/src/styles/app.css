@@ -150,3 +150,13 @@ details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:va
 .menu-sep{height:1px;background:var(--line);margin:4px 2px}
 .menu-note{font-size:11px;color:var(--muted);padding:4px 10px 2px}
 .menu .check{display:inline-block;width:1.4em}
+/* 枠の高さ：見出しの「広く／狭く」と、下の境目のドラッグ */
+.lane{overflow:visible}
+.lane .head{position:relative}
+.lane-size{display:flex;gap:3px;margin-top:6px;opacity:0;transition:opacity .12s}
+.lane .head:hover .lane-size,.lane.sel .lane-size,.lane-size:focus-within{opacity:1}
+.lane-size button{font-size:10px;font-weight:400;padding:1px 5px}
+.lane-resize{position:absolute;left:0;right:0;bottom:-4px;height:8px;cursor:ns-resize;z-index:1}
+.lane-resize:hover{background:color-mix(in srgb,var(--accent) 35%,transparent)}
+.world.exporting .lane-size,.world.exporting .lane-resize{display:none}
+.lane-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}

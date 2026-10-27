@@ -1,6 +1,6 @@
 import { toJpeg, toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
-import { contentRight } from '../model/geometry';
+import { contentRight, totalHeight } from '../model/geometry';
 import { HEAD_W, LANE_H, type Flow } from '../model/types';
 import { EXPORT_HEAD_H, type ExportOptions } from './options';
 import { download, fileName } from './text';
@@ -14,7 +14,7 @@ async function capture(world: HTMLElement, flow: Flow, o: ExportOptions, fmt: 'p
   // 図の全体（画面に映っている範囲ではない）を余白20pxで切り出す。見出しを入れるときはその分上に足す
   const head = o.header ? EXPORT_HEAD_H : 0;
   const w = Math.max(contentRight(flow) + 40, o.header ? 720 : 0) + PAD * 2;
-  const h = Math.max(1, flow.lanes.length) * LANE_H + head + PAD * 2;
+  const h = (flow.lanes.length ? totalHeight(flow) : LANE_H) + head + PAD * 2;
   // 大きな図は上限を超えないよう解像度を下げる（ふつうは2倍）
   const pixelRatio = Math.min(2, MAX_PX / w, MAX_PX / h);
   const opts: Opts = {
