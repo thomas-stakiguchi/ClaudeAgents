@@ -1,11 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   createFlow, createSampleFlow, deleteFlow, duplicateFlow, flash, getState, openFlow, redo, saveNow, setState, undo, useStore,
+  type State,
 } from '../store/flowStore';
 import { loadExportOptions, saveExportOptions, type ExportOptions } from '../export/options';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
-import { ExportModal, ImportModal } from './ExportModal';
+import { DropMenu, type MenuItem } from './DropMenu';
+import { ExportModal } from './ExportModal';
+import { GuideModal } from './GuideModal';
+import { ImportModal } from './ImportModal';
 
 const SAVE_LABEL = { saved: '保存済', dirty: '未保存', saving: '保存中…', error: '保存できませんでした' } as const;
 
@@ -22,7 +26,14 @@ export function Toolbar() {
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
   const confirmDel = useStore((s) => s.confirmDel);
-  const [modal, setModal] = useState<'export' | 'import' | null>(null);
+  const modal = useStore((s) => s.modal);
+  const setModal = (m: State['modal']) => setState({ modal: m });
+  const [opts, setOpts] = useState<ExportOptions>(loadExportOptions);
+  const toggleOpt = (key: keyof ExportOptions) => {
+    const next = { ...opts, [key]: !opts[key] };
+    setOpts(next);
+    saveExportOptions(next);
+  };
   const [busy, setBusy] = useState(false);
   const [theme, setTheme] = useState<Theme>(loadTheme);
 
@@ -64,145 +75,86 @@ export function Toolbar() {
   const onDeleteFlow = () => {
     if (confirmDel !== 'flow') {
       setState({ confirmDel: 'flow' });
-      flash('もう一度「削除」を押すとこの図を消します');
+      flash('「…」から、もう一度「削除」を押すとこの図を消します');
       return;
     }
     setState({ confirmDel: null });
     void deleteFlow();
   };
 
+  const themeItem = (t: Theme, label: string) => ({
+    kind: 'radio' as const,
+    label,
+    checked: theme === t,
+    onSelect: () => {
+      applyTheme(t);
+      setTheme(t);
+    },
+  });
+  const exportItems: MenuItem[] = [
+    { label: 'PNG（画像）', onSelect: () => void onImage('png') },
+    { label: 'JPG（画像）', onSelect: () => void onImage('jpg') },
+    { label: 'PDF', onSelect: () => void onImage('pdf') },
+    { label: 'テキスト（JSON・Mermaid・Markdown）…', onSelect: () => setModal('export') },
+    { kind: 'sep' },
+    { kind: 'note', label: '画像・PDF の設定' },
+    { kind: 'check', label: 'タイトル・出力日・凡例を入れる', checked: opts.header, onToggle: () => toggleOpt('header') },
+    { kind: 'check', label: '白い背景・マス目なし（印刷向け）', checked: opts.plain, onToggle: () => toggleOpt('plain') },
+  ];
+  const moreItems: MenuItem[] = [
+    { label: 'この図を複製', onSelect: () => void duplicateFlow() },
+    { label: confirmDel === 'flow' ? 'もう一度押すとこの図を削除します' : 'この図を削除', danger: true, onSelect: onDeleteFlow },
+    { label: 'サンプルの図を開く', onSelect: () => void createSampleFlow() },
+    { kind: 'sep' },
+    { kind: 'note', label: '画面の明るさ' },
+    themeItem('auto', '自動（PCの設定に合わせる）'),
+    themeItem('light', 'ライト'),
+    themeItem('dark', 'ダーク'),
+  ];
+
   return (
-    <div className="top">
+    <header className="top">
       <div className="brand">
+        <span className="logo" aria-hidden="true" />
         FlowCanvas
       </div>
-      <span className="lbl">図：</span>
-      <select className="flowsel" value={flowId ?? ''} onChange={(e) => void openFlow(e.target.value)} title="図の切替">
-        {flows.map((f) => (
-          <option key={f.id} value={f.id}>
-            {f.title || '無題'}
-          </option>
-        ))}
-      </select>
-      <button className="sm" onClick={() => void createFlow()}>新しい図</button>
-      <button className="sm" onClick={() => void duplicateFlow()}>図を複製</button>
-      <button className={`sm${confirmDel === 'flow' ? ' danger' : ''}`} onClick={onDeleteFlow}>
-        {confirmDel === 'flow' ? '本当に削除する' : '図を削除'}
-      </button>
-      <span className="sep" />
-      <button className="icon" title="取り消し (Ctrl+Z)" aria-label="取り消し" disabled={!canUndo} onClick={undo}>↶</button>
-      <button className="icon" title="やり直し (Ctrl+Shift+Z)" aria-label="やり直し" disabled={!canRedo} onClick={redo}>↷</button>
+      <span className="vsep" aria-hidden="true" />
+      <label className="flow-pick">
+        <span>図</span>
+        <select className="flowsel" value={flowId ?? ''} onChange={(e) => void openFlow(e.target.value)}>
+          {flows.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.title || '無題'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button className="btn" onClick={() => void createFlow()}>＋ 新しい図</button>
       <div className="spacer" />
-      <span className={`status${saveState === 'error' ? ' err' : ''}`}>{SAVE_LABEL[saveState]}</span>
-      <button className="sm primary" title="保存 (Ctrl+S)" disabled={saveState === 'saving'} onClick={() => void saveWithMessage()}>
+      <span className={`status${saveState === 'error' ? ' err' : ' wide-only'}`} role="status">{SAVE_LABEL[saveState]}</span>
+      <div className="group">
+        <button className="icon ghost" title="取り消し (Ctrl+Z)" aria-label="取り消し" disabled={!canUndo} onClick={undo}>↶</button>
+        <button className="icon ghost" title="やり直し (Ctrl+Shift+Z)" aria-label="やり直し" disabled={!canRedo} onClick={redo}>↷</button>
+      </div>
+      <div className="zoom">
+        <button className="icon ghost" title="縮小" aria-label="縮小" onClick={() => zoomBy(1 / 1.2)}>−</button>
+        <button className="zoom-val" title="全体表示" aria-label={`倍率 ${Math.round(k * 100)}%。押すと全体表示`} onClick={() => canvasApi.fit()}>
+          {Math.round(k * 100)}%
+        </button>
+        <button className="icon ghost" title="拡大" aria-label="拡大" onClick={() => zoomBy(1.2)}>＋</button>
+      </div>
+      <button className="btn" title="Excel・CSV・JSON を読み込む" onClick={() => setModal('import')}>
+        読み込み<span className="wide-only">（Excel・JSON）</span>
+      </button>
+      <DropMenu label={busy ? '書き出し中…' : '書き出し ▾'} items={exportItems} disabled={busy} />
+      <button className="btn primary" title="保存 (Ctrl+S)" disabled={saveState === 'saving'} onClick={() => void saveWithMessage()}>
         保存
       </button>
-      <button className="icon" title="縮小" aria-label="縮小" onClick={() => zoomBy(1 / 1.2)}>−</button>
-      <span className="status">{Math.round(k * 100)}%</span>
-      <button className="icon" title="拡大" aria-label="拡大" onClick={() => zoomBy(1.2)}>＋</button>
-      <button className="sm" onClick={() => canvasApi.fit()}>全体表示</button>
-      <span className="sep" />
-      <ExportMenu
-        busy={busy}
-        onPick={(v) => {
-          if (v === 'text') setModal('export');
-          else void onImage(v);
-        }}
-      />
-      <button className="sm" onClick={() => setModal('import')}>読み込み</button>
-      <button className="sm" onClick={() => void createSampleFlow()}>サンプルの図</button>
-      <select
-        style={{ width: 'auto' }}
-        value={theme}
-        title="画面の明るさ"
-        onChange={(e) => {
-          const t = e.target.value as Theme;
-          applyTheme(t);
-          setTheme(t);
-        }}
-      >
-        <option value="auto">🌓 自動</option>
-        <option value="light">☀ ライト</option>
-        <option value="dark">🌙 ダーク</option>
-      </select>
+      <button className="btn link" onClick={() => setModal('guide')}>？ 操作ガイド</button>
+      <DropMenu label="…" ariaLabel="そのほかの操作" className="icon ghost" items={moreItems} />
       {modal === 'export' && <ExportModal onClose={() => setModal(null)} />}
       {modal === 'import' && <ImportModal onClose={() => setModal(null)} />}
-    </div>
-  );
-}
-
-type ExportKind = 'png' | 'jpg' | 'pdf' | 'text';
-const EXPORT_ITEMS: { v: ExportKind; label: string }[] = [
-  { v: 'png', label: 'PNG（画像）' },
-  { v: 'jpg', label: 'JPG（画像）' },
-  { v: 'pdf', label: 'PDF' },
-  { v: 'text', label: 'テキスト（JSON・Mermaid・Markdown）…' },
-];
-
-/** 書き出しメニュー。プルダウンだと矢印キーで動かしただけで実行されるので、ボタン＋メニューにしている */
-function ExportMenu({ busy, onPick }: { busy: boolean; onPick: (v: ExportKind) => void }) {
-  const [open, setOpen] = useState(false);
-  const [opts, setOpts] = useState<ExportOptions>(loadExportOptions);
-  const toggle = (k: keyof ExportOptions) => {
-    const next = { ...opts, [k]: !opts[k] };
-    setOpts(next);
-    saveExportOptions(next);
-  };
-  const wrap = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    wrap.current?.querySelector<HTMLButtonElement>('[role=menuitem]')?.focus();
-    const onDown = (e: PointerEvent) => {
-      if (!wrap.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [open]);
-
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      setOpen(false);
-      wrap.current?.querySelector<HTMLButtonElement>('.menu-btn')?.focus();
-      return;
-    }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    e.preventDefault();
-    const items = [...(wrap.current?.querySelectorAll<HTMLButtonElement>('[role^=menuitem]') ?? [])];
-    const i = items.indexOf(document.activeElement as HTMLButtonElement);
-    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
-  };
-
-  return (
-    <div className="menu-wrap" ref={wrap} onKeyDown={onKey}>
-      <button className="sm menu-btn" aria-haspopup="menu" aria-expanded={open} disabled={busy} onClick={() => setOpen((o) => !o)}>
-        {busy ? '書き出し中…' : '書き出し ▾'}
-      </button>
-      {open && (
-        <div className="menu" role="menu">
-          {EXPORT_ITEMS.map((it) => (
-            <button
-              key={it.v}
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                onPick(it.v);
-              }}
-            >
-              {it.label}
-            </button>
-          ))}
-          <div className="menu-sep" role="separator" />
-          <div className="menu-note">画像・PDF の設定（選んでも閉じません）</div>
-          <button role="menuitemcheckbox" aria-checked={opts.header} onClick={() => toggle('header')}>
-            <span className="check">{opts.header ? '☑' : '☐'}</span>タイトル・出力日・凡例を入れる
-          </button>
-          <button role="menuitemcheckbox" aria-checked={opts.plain} onClick={() => toggle('plain')}>
-            <span className="check">{opts.plain ? '☑' : '☐'}</span>白い背景・マス目なし（印刷向け）
-          </button>
-        </div>
-      )}
-    </div>
+      {modal === 'guide' && <GuideModal onClose={() => setModal(null)} />}
+    </header>
   );
 }

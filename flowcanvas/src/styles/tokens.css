@@ -1,22 +1,35 @@
-/* モックの :root をそのまま移植 */
+/* 色・文字・形の決まり（E 案「やわらか」をもとに、ライトとダーク） */
 :root{
-  --bg:#f5f4ef; --panel:#fffdf8; --fg:#1d2126; --muted:#5f646c; --line:#d9d6cc; --field-line:#8a867b; --on-accent:#fff;
-  --accent:#2f6fde; --accent-soft:#e3ecfb;
-  --lane-actor:#faf8f2; --lane-sys:#eef3f8; --lane-head:#efece3; --lane-head-sys:#dfe8f1;
-  --node:#ffffff; --node-line:#868c94; --data:#eaf4ff; --data-line:#4d8fd6;
-  --flow:#343a42; --sel:#f5b301; --dflow:#2f6fde; --danger:#c8423a; --ok:#23784a;
-  --font:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
-  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --bg:#F5F5FA; --panel:#FFFFFF; --panel-2:#F5F5FA; --fg:#2D2A3A; --muted:#5E5A70; --line:#E6E4EE; --field-line:#8F8AA6;
+  --accent:#5B47C9; --accent-soft:#ECE8FF; --on-accent:#FFFFFF;
+  --shadow:0 1px 3px rgba(45,42,58,.08),0 1px 2px rgba(45,42,58,.04); --shadow-lg:0 12px 40px rgba(45,42,58,.18);
+  --lane-0:#F2F7FF; --lane-0-head:#E3EDFF; --lane-0-fg:#2F5BB7;
+  --lane-1:#F1FAF5; --lane-1-head:#DFF3E8; --lane-1-fg:#1F7A4D;
+  --lane-2:#FFF7EF; --lane-2-head:#FFEBD8; --lane-2-fg:#A24A10;
+  --lane-sys:#F4F3F8; --lane-sys-head:#E8E6F0; --lane-sys-fg:#4A4660;
+  --node:#FFFFFF; --node-line:#BDB8CE; --node-strong:#8F8AA6; --data:#ECE8FF; --data-line:#7B6AD8;
+  --flow:#3B3850; --sel:#F5B301; --dflow:#5B47C9; --danger:#B42318; --danger-soft:#FDECEA; --ok:#1F7A4D;
+  --radius:14px; --radius-lg:18px;
+  --font:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Hiragino Sans","Noto Sans JP",system-ui,sans-serif;
+  --mono:var(--font);
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#a3a9b2; --line:#2f353d; --field-line:#6b7580; --on-accent:#0f1722;
-  --accent:#6b9cf0; --accent-soft:#223253;
-  --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
-  --node:#262b32; --node-line:#76808c; --data:#1f2d3f; --data-line:#6b9cf0;
-  --flow:#d4d8de; --sel:#e0a800; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}}
+  --bg:#15141B; --panel:#1E1C26; --panel-2:#26242F; --fg:#ECEAF4; --muted:#A9A5BA; --line:#2F2C3B; --field-line:#6B6684;
+  --accent:#9D8CFF; --accent-soft:#2E2850; --on-accent:#15141B;
+  --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 12px 40px rgba(0,0,0,.5);
+  --lane-0:#1A2233; --lane-0-head:#22304A; --lane-0-fg:#9EC1FF;
+  --lane-1:#18271F; --lane-1-head:#1F3A2C; --lane-1-fg:#8FDCB3;
+  --lane-2:#2A2118; --lane-2-head:#3D2C1C; --lane-2-fg:#F3B983;
+  --lane-sys:#1F1D29; --lane-sys-head:#2A2738; --lane-sys-fg:#C8C4D8;
+  --node:#262433; --node-line:#4A4660; --node-strong:#7A7594; --data:#2A2546; --data-line:#9D8CFF;
+  --flow:#D9D6E6; --sel:#E0A800; --dflow:#9D8CFF; --danger:#FF8A7A; --danger-soft:#3A1F1E; --ok:#7FD6A8; color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#15181c; --panel:#1d2127; --fg:#e8e6e0; --muted:#a3a9b2; --line:#2f353d; --field-line:#6b7580; --on-accent:#0f1722;
-  --accent:#6b9cf0; --accent-soft:#223253;
-  --lane-actor:#1b1f24; --lane-sys:#192028; --lane-head:#252a31; --lane-head-sys:#1f2a36;
-  --node:#262b32; --node-line:#76808c; --data:#1f2d3f; --data-line:#6b9cf0;
-  --flow:#d4d8de; --sel:#e0a800; --dflow:#6b9cf0; --danger:#e26a62; --ok:#4fbf7d; color-scheme:dark}
+  --bg:#15141B; --panel:#1E1C26; --panel-2:#26242F; --fg:#ECEAF4; --muted:#A9A5BA; --line:#2F2C3B; --field-line:#6B6684;
+  --accent:#9D8CFF; --accent-soft:#2E2850; --on-accent:#15141B;
+  --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 12px 40px rgba(0,0,0,.5);
+  --lane-0:#1A2233; --lane-0-head:#22304A; --lane-0-fg:#9EC1FF;
+  --lane-1:#18271F; --lane-1-head:#1F3A2C; --lane-1-fg:#8FDCB3;
+  --lane-2:#2A2118; --lane-2-head:#3D2C1C; --lane-2-fg:#F3B983;
+  --lane-sys:#1F1D29; --lane-sys-head:#2A2738; --lane-sys-fg:#C8C4D8;
+  --node:#262433; --node-line:#4A4660; --node-strong:#7A7594; --data:#2A2546; --data-line:#9D8CFF;
+  --flow:#D9D6E6; --sel:#E0A800; --dflow:#9D8CFF; --danger:#FF8A7A; --danger-soft:#3A1F1E; --ok:#7FD6A8; color-scheme:dark}
