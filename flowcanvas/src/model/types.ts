@@ -1,5 +1,8 @@
 export type LaneKind = 'actor' | 'system';
-export type NodeType = 'start' | 'end' | 'task' | 'decision' | 'data' | 'excel' | 'csv' | 'pc';
+export type NodeType =
+  | 'start' | 'end' | 'task' | 'decision' | 'data'
+  | 'excel' | 'csv' | 'pc' | 'mail' | 'doc' | 'person' | 'clock'
+  | 'note';
 export type EdgeKind = 'flow' | 'data';
 
 export type Lane = { id: string; kind: LaneKind; name: string; desc?: string };
@@ -22,9 +25,14 @@ export const MIN_WORLD_W = 2600;
 
 export const uid = () => Math.random().toString(36).slice(2, 9);
 
-/** アイコンで描く部品（Excel・CSV・PC） */
-export const ICON_TYPES: readonly NodeType[] = ['excel', 'csv', 'pc'];
+/** アイコンで描く部品 */
+export const ICON_TYPES: readonly NodeType[] = ['excel', 'csv', 'pc', 'mail', 'doc', 'person', 'clock'];
 export const isIconType = (t: NodeType) => ICON_TYPES.includes(t);
 
 export const nodeSize = (t: NodeType): [number, number] =>
-  t === 'task' ? [150, 56] : t === 'decision' ? [130, 74] : t === 'data' ? [140, 52] : isIconType(t) ? [110, 80] : [48, 48];
+  t === 'task' ? [150, 56]
+  : t === 'decision' ? [130, 74]
+  : t === 'data' ? [140, 52]
+  : t === 'note' ? [160, 72]
+  : isIconType(t) ? [110, 80]
+  : [48, 48];

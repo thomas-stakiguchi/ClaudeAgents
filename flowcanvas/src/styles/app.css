@@ -56,9 +56,8 @@ svg.edges path.hit{stroke:transparent;stroke-width:14;fill:none;pointer-events:s
 svg.edges path.line{fill:none;stroke-width:1.8;pointer-events:none}
 svg.edges path.line.flow{stroke:var(--flow)}
 svg.edges path.line.data{stroke:var(--dflow);stroke-dasharray:6 4}
-svg.edges path.line.sel{stroke:var(--accent);stroke-width:3}
 svg.edges path.line.pending{stroke:var(--ok);stroke-width:2;stroke-dasharray:4 4}
-svg.edges marker path.arF{fill:var(--flow)}svg.edges marker path.arD{fill:var(--dflow)}svg.edges marker path.arS{fill:var(--accent)}
+svg.edges marker path.arF{fill:var(--flow)}svg.edges marker path.arD{fill:var(--dflow)}
 svg.edges text{font-family:var(--font);font-size:11px;fill:var(--fg);paint-order:stroke;stroke:var(--bg);stroke-width:4px;pointer-events:none}
 /* 部品：.nwrap が位置と当たり判定、.node が見た目、.port は外側に置く（判断のひし形で切れないように） */
 .nwrap{position:absolute;cursor:move;user-select:none}
@@ -118,3 +117,16 @@ details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:va
 .node.icon span{font-size:11px;line-height:1.25;max-height:2.5em;overflow:hidden}
 .nwrap.sel .node.icon{background:var(--accent-soft)}
 .pal svg{display:block;margin:0 auto 2px}
+/* 書き出しメニュー */
+.menu-wrap{position:relative}
+.menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;display:flex;flex-direction:column;min-width:240px;box-shadow:0 6px 20px rgba(0,0,0,.15)}
+.menu button{border:0;text-align:left;padding:7px 10px;border-radius:5px;background:none}
+.menu button:hover,.menu button:focus-visible{background:var(--accent-soft);outline:none}
+/* 選んでいる枠は全体をうっすら色付け */
+.lane.sel .body{background-color:color-mix(in srgb,var(--accent) 9%,transparent);box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent)}
+.lane.sel .head{background:var(--accent-soft)}
+.hint.place{margin-top:8px}
+.hint.place b{color:var(--fg)}
+/* 付せん：黄色い紙。色はテーマに関係なく固定（ダークでも読めるように文字は濃い色） */
+.node.note{background:#FFF1A8;border:1px solid #D9B93A;border-radius:2px;color:#2b2a22;justify-content:flex-start;align-items:flex-start;text-align:left;padding:8px 10px;font-size:12px;box-shadow:2px 3px 0 rgba(0,0,0,.12);white-space:pre-wrap}
+.nwrap.sel .node.note{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 1.5px var(--accent)}

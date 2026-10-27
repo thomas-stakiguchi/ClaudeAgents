@@ -37,6 +37,11 @@ export function SidebarRight() {
                 <option value="excel">Excel</option>
                 <option value="csv">CSV</option>
                 <option value="pc">PC</option>
+                <option value="mail">メール</option>
+                <option value="doc">書類・帳票</option>
+                <option value="person">人（顧客・取引先）</option>
+                <option value="clock">時計（定期処理・待ち）</option>
+                <option value="note">付せん（メモ）</option>
               </select>
             </div>
             <div className="field">

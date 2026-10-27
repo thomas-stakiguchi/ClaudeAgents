@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { downloadText, fileName, toJson, toMarkdownTables, toMermaid } from '../export/text';
 import type { Flow } from '../model/types';
 import { flash, getState, importFlow } from '../store/flowStore';
@@ -11,9 +11,24 @@ const KINDS = [
 ] as const;
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    // 開いたら中の最初の操作できる場所へ。Esc で閉じる
+    box.current?.querySelector<HTMLElement>('button, textarea, input')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        close.current();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
   return (
     <div className="modal" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="box" role="dialog" aria-label={title}>
+      <div className="box" role="dialog" aria-modal="true" aria-label={title} ref={box}>
         <h3 style={{ margin: 0 }}>{title}</h3>
         {children}
       </div>

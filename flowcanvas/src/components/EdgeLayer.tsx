@@ -20,7 +20,7 @@ export const EdgeLayer = memo(function EdgeLayer({ edges, nodes, tops, selId, wi
   return (
     <svg className="edges" width={width} height={height}>
       <defs>
-        {(['arF', 'arD', 'arS'] as const).map((id) => (
+        {(['arF', 'arD'] as const).map((id) => (
           <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
             <path className={id} d="M0 0L10 5L0 10z" style={{ fill: MARKER_FILL[id] }} />
           </marker>
@@ -35,7 +35,7 @@ export const EdgeLayer = memo(function EdgeLayer({ edges, nodes, tops, selId, wi
         const a = byId.get(e.from), b = byId.get(e.to);
         if (!a || !b) return null;
         const selected = e.id === selId;
-        const marker = selected ? 'arS' : e.color ? markerOf.get(e.color)! : e.kind === 'flow' ? 'arF' : 'arD';
+        const marker = e.color ? markerOf.get(e.color)! : e.kind === 'flow' ? 'arF' : 'arD';
         return <EdgeView key={e.id} edge={e} a={a} b={b} aTop={tops.get(a.lane) ?? 0} bTop={tops.get(b.lane) ?? 0} selected={selected} marker={marker} />;
       })}
       {pending && <path className="line pending" d={pending} style={{ fill: 'none', stroke: 'var(--ok)', strokeWidth: 2, strokeDasharray: '4 4' }} />}
@@ -50,6 +50,8 @@ const EdgeView = memo(function EdgeView({ edge, a, b, aTop, bTop, selected, mark
   return (
     <g>
       <path className="hit" d={d} data-id={edge.id} style={{ fill: 'none', stroke: 'transparent' }} />
+      {/* 選んでいる線は色を変えず、下に太い帯を敷いて目立たせる（変えた色をそのまま確かめられるように） */}
+      {selected && <path d={d} style={SEL_HALO} />}
       <path className={`line ${edge.kind}${selected ? ' sel' : ''}`} d={d} markerEnd={`url(#${marker})`} style={lineStyle(edge, selected)} />
       {edge.label && (
         <text x={mx} y={my - 6} textAnchor="middle" style={TEXT_STYLE}>
@@ -61,16 +63,18 @@ const EdgeView = memo(function EdgeView({ edge, a, b, aTop, bTop, selected, mark
 });
 
 // 画像書き出し（html-to-image）では SVG にクラスの CSS が効かないので、見た目はインラインで持たせる
-const MARKER_FILL = { arF: 'var(--flow)', arD: 'var(--dflow)', arS: 'var(--accent)' } as const;
+const MARKER_FILL = { arF: 'var(--flow)', arD: 'var(--dflow)' } as const;
 
 function lineStyle({ kind, color }: Edge, selected: boolean): React.CSSProperties {
   return {
     fill: 'none',
-    stroke: selected ? 'var(--accent)' : color ?? (kind === 'flow' ? 'var(--flow)' : 'var(--dflow)'),
-    strokeWidth: selected ? 3 : color ? 2.2 : 1.8,
+    stroke: color ?? (kind === 'flow' ? 'var(--flow)' : 'var(--dflow)'),
+    strokeWidth: selected ? 2.6 : color ? 2.2 : 1.8,
     strokeDasharray: kind === 'data' ? '6 4' : undefined,
   };
 }
+
+const SEL_HALO: React.CSSProperties = { fill: 'none', stroke: 'var(--sel)', strokeWidth: 10, strokeOpacity: 0.55, strokeLinecap: 'round' };
 
 const TEXT_STYLE: React.CSSProperties = {
   fontFamily: 'var(--font)',

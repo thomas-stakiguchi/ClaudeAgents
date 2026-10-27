@@ -20,6 +20,11 @@ export function toMermaid(doc: Flow) {
         : n.type === 'start' || n.type === 'end' ? `(("${lb}"))`
         : n.type === 'excel' || n.type === 'csv' ? `[/"${lb}"/]`
         : n.type === 'pc' ? `["🖥 ${lb}"]`
+        : n.type === 'mail' ? `["✉ ${lb}"]`
+        : n.type === 'doc' ? `[/"📄 ${lb}"/]`
+        : n.type === 'person' ? `(["👤 ${lb}"])`
+        : n.type === 'clock' ? `["⏰ ${lb}"]`
+        : n.type === 'note' ? `>"📝 ${lb}"]`
         : `["${lb}"]`;
       L.push(`    ${nid[n.id]}${sh}`);
     });

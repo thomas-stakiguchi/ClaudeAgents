@@ -24,6 +24,11 @@ const TYPE_WORDS: [string, NodeType][] = [
   ['Excel', 'excel'], ['EXCEL', 'excel'], ['excel', 'excel'], ['エクセル', 'excel'],
   ['CSV', 'csv'], ['csv', 'csv'],
   ['パソコン', 'pc'], ['PC', 'pc'], ['pc', 'pc'],
+  ['メール', 'mail'],
+  ['書類', 'doc'], ['帳票', 'doc'],
+  ['顧客', 'person'], ['取引先', 'person'],
+  ['時計', 'clock'], ['タイマー', 'clock'], ['定期処理', 'clock'],
+  ['付せん', 'note'], ['付箋', 'note'], ['メモ', 'note'],
 ];
 
 const DATA_WORDS = ['点線', '破線', 'データの流れ', '点々'];
