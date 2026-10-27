@@ -1,6 +1,6 @@
 import { clampNode } from '../model/geometry';
-import type { Edge, EdgeKind, Lane, LaneKind, Node, NodeType } from '../model/types';
-import { deleteLane, deleteSel, setLaneKind } from '../store/actions';
+import type { Edge, EdgeKind, Lane, LaneKind, Node, NodeType, Side } from '../model/types';
+import { alignNodes, copySel, deleteLane, deleteSel, setLaneKind } from '../store/actions';
 import { edit, useStore } from '../store/flowStore';
 import { ColorPicker } from './ColorPicker';
 
@@ -63,6 +63,37 @@ export function SidebarRight() {
     }
   }
 
+  if (sel?.kind === 'nodes') {
+    const n = sel.ids.length;
+    return (
+      <aside className="side right">
+        <section>
+          <h3>{n}個の部品を選択中</h3>
+          <p className="hint" style={{ marginBottom: 10 }}>
+            ドラッグでまとめて動かせます。Ctrl+C でコピー、Ctrl+V で貼り付け、Delete でまとめて削除。
+          </p>
+          <div className="field">
+            <label>そろえる</label>
+            <div className="align-btns">
+              <button className="sm" onClick={() => alignNodes('left')}>左端</button>
+              <button className="sm" onClick={() => alignNodes('center')}>中心</button>
+              <button className="sm" onClick={() => alignNodes('right')}>右端</button>
+              <button className="sm" onClick={() => alignNodes('middle')}>枠の上下中央</button>
+              <button className="sm" onClick={() => alignNodes('hspace')} disabled={n < 3} title="3個以上で使えます">
+                横に等間隔
+              </button>
+            </div>
+            <p className="hint" style={{ marginTop: 6 }}>
+              左端・中心・右端は、縦に並べたとき（別の枠どうし）の時間の位置をそろえます。
+            </p>
+          </div>
+          <button className="sm" onClick={() => copySel()}>コピー</button>
+          <button className="sm danger" style={{ marginLeft: 6 }} onClick={deleteSel}>まとめて削除</button>
+        </section>
+      </aside>
+    );
+  }
+
   if (sel?.kind === 'edge') {
     const e = flow.edges.find((x) => x.id === sel.id);
     if (e) {
@@ -88,6 +119,29 @@ export function SidebarRight() {
               </select>
             </div>
             <div className="field">
+              <label htmlFor="p-route">線の形</label>
+              <select
+                id="p-route"
+                value={e.route ?? 'curve'}
+                onChange={(ev) =>
+                  set((d) => {
+                    if (ev.target.value === 'ortho') d.route = 'ortho';
+                    else delete d.route;
+                  })
+                }
+              >
+                <option value="curve">曲線</option>
+                <option value="ortho">直角（カギ線）</option>
+              </select>
+            </div>
+            <div className="field side-pick">
+              <label>線が出る辺・入る辺（重なるときに変える）</label>
+              <div>
+                <SideSelect label="出る辺" value={e.fromSide} onChange={(v) => set((d) => (v ? (d.fromSide = v) : delete d.fromSide))} />
+                <SideSelect label="入る辺" value={e.toSide} onChange={(v) => set((d) => (v ? (d.toSide = v) : delete d.toSide))} />
+              </div>
+            </div>
+            <div className="field">
               <label>線の色</label>
               <ColorPicker
                 value={e.color}
@@ -103,8 +157,22 @@ export function SidebarRight() {
               <label htmlFor="p-elabel">ラベル（条件・受け渡す内容）</label>
               <input type="text" id="p-elabel" value={e.label ?? ''} onChange={(ev) => set((d) => void (d.label = ev.target.value), `elabel:${e.id}`)} />
             </div>
-            <button className="sm" onClick={() => set((d) => void ([d.from, d.to] = [d.to, d.from]))}>向きを反転</button>
-            <button className="sm danger" style={{ marginLeft: 6 }} onClick={deleteSel}>削除</button>
+            <button
+              className="sm"
+              onClick={() =>
+                set((d) => {
+                  [d.from, d.to] = [d.to, d.from];
+                  const [fs, ts] = [d.fromSide, d.toSide];
+                  if (ts) d.fromSide = ts;
+                  else delete d.fromSide;
+                  if (fs) d.toSide = fs;
+                  else delete d.toSide;
+                })
+              }
+            >
+              向きを反転
+            </button>
+            <button className="sm danger" style={{ marginLeft: 6 }} onClick={deleteSel}>この矢印を削除</button>
           </section>
         </aside>
       );
@@ -172,5 +240,20 @@ export function SidebarRight() {
         </dl>
       </section>
     </aside>
+  );
+}
+
+const SIDE_LABEL: [Side | '', string][] = [['', '自動'], ['top', '上'], ['right', '右'], ['bottom', '下'], ['left', '左']];
+
+function SideSelect({ label, value, onChange }: { label: string; value?: Side; onChange: (v: Side | undefined) => void }) {
+  return (
+    <label className="side-sel">
+      <span>{label}</span>
+      <select value={value ?? ''} onChange={(e) => onChange((e.target.value || undefined) as Side | undefined)}>
+        {SIDE_LABEL.map(([v, t]) => (
+          <option key={v} value={v}>{t}</option>
+        ))}
+      </select>
+    </label>
   );
 }

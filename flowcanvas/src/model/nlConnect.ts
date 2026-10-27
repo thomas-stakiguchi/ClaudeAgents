@@ -1,5 +1,5 @@
 import { COLOR_WORDS } from './colors';
-import type { EdgeKind, Node, NodeType } from './types';
+import type { EdgeKind, Node, NodeType, Route } from './types';
 
 /*
  * 「作業とデータを点線で繋ぐ。線は赤。」のような文から、つなぐ部品・線の種類・色・ラベルを読み取る。
@@ -10,6 +10,7 @@ export type NlCommand = {
   from?: Node;
   to?: Node;
   kind?: EdgeKind;
+  route?: Route;
   color?: string;
   label?: string;
 };
@@ -57,6 +58,10 @@ export function parseConnect(text: string, nodes: Node[]): NlResult {
   for (const w of DATA_WORDS) if (rest.includes(w)) (cmd.kind = 'data'), (rest = rest.split(w).join(blank(w)));
   for (const w of FLOW_WORDS) if (rest.includes(w)) (cmd.kind = 'flow'), (rest = rest.split(w).join(blank(w)));
 
+  // 線の形
+  for (const w of ['直角', 'カギ線', 'かぎ線']) if (rest.includes(w)) (cmd.route = 'ortho'), (rest = rest.split(w).join(blank(w)));
+  for (const w of ['曲線']) if (rest.includes(w)) (cmd.route = 'curve'), (rest = rest.split(w).join(blank(w)));
+
   // 色
   const hm = rest.match(/#[0-9a-fA-F]{6}\b/);
   if (hm) {
@@ -87,7 +92,7 @@ export function parseConnect(text: string, nodes: Node[]): NlResult {
     cmd.from = a.node;
     cmd.to = b.node;
   }
-  if (!cmd.from && cmd.kind === undefined && cmd.color === undefined && cmd.label === undefined) {
+  if (!cmd.from && cmd.kind === undefined && cmd.color === undefined && cmd.label === undefined && cmd.route === undefined) {
     return { ok: false, error: '読み取れませんでした。例：「見積を作成すると商談を点線で繋ぐ。線は赤。」' };
   }
   return { ok: true, cmd };

@@ -130,3 +130,10 @@ details.help summary{cursor:pointer;font-size:11px;letter-spacing:.08em;color:va
 /* 付せん：黄色い紙。色はテーマに関係なく固定（ダークでも読めるように文字は濃い色） */
 .node.note{background:#FFF1A8;border:1px solid #D9B93A;border-radius:2px;color:#2b2a22;justify-content:flex-start;align-items:flex-start;text-align:left;padding:8px 10px;font-size:12px;box-shadow:2px 3px 0 rgba(0,0,0,.12);white-space:pre-wrap}
 .nwrap.sel .node.note{box-shadow:0 0 0 3px var(--accent-soft),0 0 0 1.5px var(--accent)}
+/* 範囲選択の四角 */
+.selbox{position:absolute;border:1.5px dashed var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);pointer-events:none;z-index:4}
+/* 部品の上で名前を書く欄 */
+.inline-edit{position:absolute;inset:-2px;z-index:5;min-height:0;resize:none;padding:6px 8px;font-size:12px;line-height:1.3;text-align:center;border:2px solid var(--accent);border-radius:6px;background:var(--panel);color:var(--fg);box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.align-btns{display:flex;flex-wrap:wrap;gap:4px}
+.side-pick>div{display:flex;gap:8px}
+.side-sel{display:flex;flex-direction:column;gap:2px;flex:1;font-size:11px;color:var(--muted)}

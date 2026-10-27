@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { EdgeKind, LaneKind, NodeType } from '../model/types';
+import type { EdgeKind, LaneKind, NodeType, Route } from '../model/types';
 import { addLane, addNode, deleteLane, moveLane, runSentence, targetLane } from '../store/actions';
 import { setState, useStore } from '../store/flowStore';
 import { NodeIcon } from './Icons';
@@ -87,6 +87,7 @@ function PlaceHint() {
 function ConnectSection() {
   const tool = useStore((s) => s.tool);
   const edgeKind = useStore((s) => s.edgeKind);
+  const edgeRoute = useStore((s) => s.edgeRoute);
   const [text, setText] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; message: string } | null>(null);
   const run = () => {
@@ -111,6 +112,10 @@ function ConnectSection() {
         <select value={edgeKind} onChange={(e) => setState({ edgeKind: e.target.value as EdgeKind })}>
           <option value="flow">業務の流れ（実線）</option>
           <option value="data">データの流れ（点線）</option>
+        </select>
+        <select aria-label="これから引く線の形" value={edgeRoute} onChange={(e) => setState({ edgeRoute: e.target.value as Route })} style={{ marginTop: 6 }}>
+          <option value="curve">曲線</option>
+          <option value="ortho">直角（カギ線）</option>
         </select>
       </div>
       <p className="hint">
@@ -138,7 +143,7 @@ function ConnectSection() {
         <p className="hint" style={{ marginTop: 6 }}>
           部品の名前を2つ書きます。「AからBへ」で向きが決まります。
           <br />
-          線：点線／実線　色：赤・青・緑・黄・オレンジ・紫・黒 など
+          線：点線／実線、直角／曲線　色：赤・青・緑・黄・オレンジ・紫・黒 など
           <br />
           ラベル：「ラベルは〇〇」
           <br />
@@ -180,7 +185,15 @@ export function SidebarLeft() {
       <details className="help">
         <summary>そのほかの操作</summary>
         <p className="hint">
-          ダブルクリック：名前を編集
+          ダブルクリック：部品の上で名前を書く（Enter で確定、Shift+Enter で改行、Esc で取り消し）
+          <br />
+          部品を選んで Enter／F2：名前を書く
+          <br />
+          Shift+クリック：部品を選択に足す
+          <br />
+          Shift+背景ドラッグ：範囲で選ぶ　Ctrl+A：全部選ぶ
+          <br />
+          Ctrl+C／Ctrl+V：コピー・貼り付け（別の図へも貼れる）
           <br />
           Delete：選択中を削除　／　Esc：接続をやめる
           <br />

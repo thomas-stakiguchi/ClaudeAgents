@@ -1,9 +1,9 @@
 import { clampNode } from '../model/geometry';
 import { colorName } from '../model/colors';
 import { parseConnect } from '../model/nlConnect';
-import { HEAD_W, LANE_H, nodeSize, uid, type EdgeKind, type Flow, type LaneKind, type NodeType } from '../model/types';
+import { HEAD_W, LANE_H, nodeSize, uid, type Edge, type EdgeKind, type Flow, type LaneKind, type Node, type NodeType, type Route, type Side } from '../model/types';
 import type { Draft } from 'immer';
-import { edit, flash, getState, setState, type Sel } from './flowStore';
+import { edit, flash, getState, selectedNodeIds, setState, type Sel } from './flowStore';
 
 const sortLanes = (d: Draft<Flow>) => {
   // Actor は上段、システムは下段（同じ区分の中の順番は保つ）
@@ -52,7 +52,7 @@ export function deleteLane(id: string) {
     d.edges = d.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
     d.lanes = d.lanes.filter((l) => l.id !== id);
   });
-  setState((s) => ({ confirmDel: null, sel: s.sel?.id === id ? null : s.sel }));
+  setState((s) => ({ confirmDel: null, sel: s.sel?.kind === 'lane' && s.sel.id === id ? null : s.sel }));
 }
 
 const DEFAULT_LABEL: Record<NodeType, string> = {
@@ -89,12 +89,18 @@ export function addNode(type: NodeType) {
   focusSoon('#p-label', true);
 }
 
-export function connect(from: string, to: string, opts: { kind?: EdgeKind; color?: string; label?: string } = {}) {
+export function connect(from: string, to: string, opts: { kind?: EdgeKind; color?: string; label?: string; route?: Route; fromSide?: Side } = {}) {
   if (from === to) return; // 同じ部品同士は繋がない
   const id = uid();
   const kind = opts.kind ?? getState().edgeKind;
+  const route = opts.route ?? getState().edgeRoute;
   edit((d) => {
-    d.edges.push({ id, from, to, kind, label: opts.label ?? '', ...(opts.color ? { color: opts.color } : {}) });
+    d.edges.push({
+      id, from, to, kind, label: opts.label ?? '',
+      ...(opts.color ? { color: opts.color } : {}),
+      ...(route === 'ortho' ? { route } : {}),
+      ...(opts.fromSide ? { fromSide: opts.fromSide } : {}),
+    });
   });
   setState({ connectSrc: null, sel: { kind: 'edge', id } });
   if (opts.label === undefined) focusSoon('#p-elabel'); // 確定直後にラベル欄へ
@@ -106,33 +112,40 @@ export function runSentence(text: string): { ok: boolean; message: string } {
   if (!flow) return { ok: false, message: '図が開かれていません。' };
   const r = parseConnect(text, flow.nodes);
   if (!r.ok) return { ok: false, message: r.error };
-  const { from, to, kind, color, label } = r.cmd;
-  const style = [kind && (kind === 'data' ? '点線' : '実線'), color && colorName(color), label && `ラベル「${label}」`].filter(Boolean).join('・');
+  const { from, to, kind, color, label, route } = r.cmd;
+  const style = [
+    kind && (kind === 'data' ? '点線' : '実線'),
+    route && (route === 'ortho' ? '直角' : '曲線'),
+    color && colorName(color),
+    label && `ラベル「${label}」`,
+  ].filter(Boolean).join('・');
 
   if (from && to) {
     // すでに同じ向きの矢印があれば、新しく作らずにそれを変える
     const exist = flow.edges.find((e) => e.from === from.id && e.to === to.id);
     if (exist) {
-      updateEdge(exist.id, { kind, color, label });
+      updateEdge(exist.id, { kind, color, label, route });
       setState({ sel: { kind: 'edge', id: exist.id } });
       return { ok: true, message: `「${from.label}」→「${to.label}」の線を変えました${style ? `（${style}）` : ''}。` };
     }
-    connect(from.id, to.id, { kind, color, label: label ?? '' });
+    connect(from.id, to.id, { kind, color, label: label ?? '', route });
     return { ok: true, message: `「${from.label}」→「${to.label}」を繋ぎました${style ? `（${style}）` : ''}。` };
   }
   // 部品の名前がなければ、選んでいる矢印を変える
   if (sel?.kind === 'edge') {
-    updateEdge(sel.id, { kind, color, label });
+    updateEdge(sel.id, { kind, color, label, route });
     return { ok: true, message: `選んでいる線を変えました（${style}）。` };
   }
   return { ok: false, message: 'つなぐ部品の名前を2つ書いてください。線の色だけ変えるときは、先に線をクリックして選んでください。' };
 }
 
-function updateEdge(id: string, p: { kind?: EdgeKind; color?: string; label?: string }) {
+function updateEdge(id: string, p: { kind?: EdgeKind; color?: string; label?: string; route?: Route }) {
   edit((d) => {
     const e = d.edges.find((x) => x.id === id);
     if (!e) return;
     if (p.kind) e.kind = p.kind;
+    if (p.route === 'ortho') e.route = 'ortho';
+    if (p.route === 'curve') delete e.route;
     if (p.color) e.color = p.color;
     if (p.label !== undefined) e.label = p.label;
   });
@@ -142,15 +155,125 @@ export function deleteSel() {
   const { sel } = getState();
   if (!sel) return;
   if (sel.kind === 'lane') return deleteLane(sel.id);
-  edit((d) => {
-    if (sel.kind === 'node') {
-      d.nodes = d.nodes.filter((n) => n.id !== sel.id);
-      d.edges = d.edges.filter((e) => e.from !== sel.id && e.to !== sel.id);
-    } else {
+  if (sel.kind === 'edge') {
+    edit((d) => {
       d.edges = d.edges.filter((e) => e.id !== sel.id);
+    });
+  } else {
+    const gone = new Set(selectedNodeIds(sel));
+    edit((d) => {
+      d.nodes = d.nodes.filter((n) => !gone.has(n.id));
+      d.edges = d.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to));
+    });
+  }
+  setState({ sel: null });
+}
+
+/** 部品を選ぶ。add=true（Shift／Ctrl+クリック）なら今の選択に足す・外す */
+export function selectNodes(ids: string[], add = false) {
+  const cur = add ? selectedNodeIds(getState().sel) : [];
+  let next = [...cur];
+  for (const id of ids) next = next.includes(id) && add ? next.filter((x) => x !== id) : next.includes(id) ? next : [...next, id];
+  setState({ sel: next.length > 1 ? { kind: 'nodes', ids: next } : next.length === 1 ? { kind: 'node', id: next[0] } : null });
+}
+
+export function selectAll() {
+  const f = getState().flow;
+  if (f) selectNodes(f.nodes.map((n) => n.id));
+}
+
+/* ---------- コピー・貼り付け ---------- */
+// 図を切り替えても残るので、別の図へも貼り付けられる
+let clip: { nodes: Node[]; edges: Edge[]; laneNames: Record<string, string> } | null = null;
+let pasteCount = 0;
+
+export function copySel() {
+  const { flow, sel } = getState();
+  const ids = new Set(selectedNodeIds(sel));
+  if (!flow || !ids.size) return false;
+  clip = {
+    nodes: flow.nodes.filter((n) => ids.has(n.id)),
+    // 選んだ部品どうしをつなぐ線だけ一緒にコピーする
+    edges: flow.edges.filter((e) => ids.has(e.from) && ids.has(e.to)),
+    laneNames: Object.fromEntries(flow.lanes.map((l) => [l.id, l.name])),
+  };
+  pasteCount = 0;
+  flash(`${ids.size}個の部品をコピーしました`);
+  return true;
+}
+
+export function paste() {
+  const { flow } = getState();
+  if (!flow || !clip) return;
+  if (!flow.lanes.length) return flash('先に「① 枠を作る」で枠を追加してください');
+  pasteCount++;
+  const src = clip;
+  // 枠は同じ id → 同じ名前 → 最初の枠 の順で探す
+  const laneFor = (laneId: string) =>
+    flow.lanes.find((l) => l.id === laneId)?.id ?? flow.lanes.find((l) => l.name === src.laneNames[laneId])?.id ?? flow.lanes[0].id;
+  const idMap = new Map(src.nodes.map((n) => [n.id, uid()]));
+  const nodes: Node[] = src.nodes.map((n) => ({ ...n, id: idMap.get(n.id)!, lane: laneFor(n.lane), x: n.x + 40 * pasteCount }));
+  const edges: Edge[] = src.edges.map((e) => ({ ...e, id: uid(), from: idMap.get(e.from)!, to: idMap.get(e.to)! }));
+  edit((d) => {
+    d.nodes.push(...nodes);
+    d.edges.push(...edges);
+  });
+  selectNodes(nodes.map((n) => n.id));
+}
+
+/* ---------- 整列 ---------- */
+export type AlignKind = 'left' | 'center' | 'right' | 'middle' | 'hspace';
+
+export function alignNodes(kind: AlignKind) {
+  const { flow, sel } = getState();
+  const ids = new Set(selectedNodeIds(sel));
+  if (!flow || ids.size < 2) return;
+  const snap = (v: number) => Math.round(v / 10) * 10;
+  const ns = flow.nodes.filter((n) => ids.has(n.id));
+  const w = (n: Node) => nodeSize(n.type)[0];
+  const left = Math.min(...ns.map((n) => n.x));
+  const right = Math.max(...ns.map((n) => n.x + w(n)));
+  const center = ns.reduce((t, n) => t + n.x + w(n) / 2, 0) / ns.length;
+  // 横に等間隔：左右の端の部品はそのまま、間を同じ間隔に
+  const sorted = [...ns].sort((a, b) => a.x + w(a) / 2 - (b.x + w(b) / 2));
+  const c0 = sorted[0].x + w(sorted[0]) / 2, c1 = sorted[sorted.length - 1].x + w(sorted[sorted.length - 1]) / 2;
+  const step = (c1 - c0) / (sorted.length - 1);
+  const order = new Map(sorted.map((n, i) => [n.id, i]));
+
+  edit((d) => {
+    for (const n of d.nodes) {
+      if (!ids.has(n.id)) continue;
+      const nw = w(n), nh = nodeSize(n.type)[1];
+      if (kind === 'left') n.x = left;
+      if (kind === 'right') n.x = right - nw;
+      if (kind === 'center') n.x = snap(center - nw / 2);
+      if (kind === 'middle') n.ly = snap((LANE_H - nh) / 2); // それぞれの枠の中で上下の真ん中
+      if (kind === 'hspace') n.x = snap(c0 + step * order.get(n.id)! - nw / 2);
+      clampNode(n);
     }
   });
-  setState({ sel: null });
+  // 同じ枠の部品を左右でそろえると重なってしまうので、気付けるように知らせる
+  const after = getState().flow!.nodes.filter((n) => ids.has(n.id));
+  const overlap = after.some((a, i) =>
+    after.slice(i + 1).some((b) => {
+      if (a.lane !== b.lane) return false;
+      const [aw, ah] = nodeSize(a.type), [bw, bh] = nodeSize(b.type);
+      return a.x < b.x + bw && b.x < a.x + aw && a.ly < b.ly + bh && b.ly < a.ly + ah;
+    }),
+  );
+  if (overlap) flash('同じ枠の部品が重なりました。Ctrl+Z で元に戻せます');
+}
+
+/* ---------- 図の上で名前を書く ---------- */
+export function startEdit(id: string) {
+  setState({ sel: { kind: 'node', id }, editing: id, connectSrc: null });
+}
+export function commitEdit(id: string, label: string) {
+  setState({ editing: null });
+  edit((d) => {
+    const n = d.nodes.find((x) => x.id === id);
+    if (n && n.label !== label) n.label = label;
+  });
 }
 
 export function focusSoon(selector: string, select = false) {
