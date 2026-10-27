@@ -7,7 +7,6 @@ import { ColorPicker } from './ColorPicker';
 export function SidebarRight() {
   const flow = useStore((s) => s.flow);
   const sel = useStore((s) => s.sel);
-  const confirmDel = useStore((s) => s.confirmDel);
   if (!flow) return <aside className="side right" />;
 
   if (sel?.kind === 'node') {
@@ -230,10 +229,7 @@ export function SidebarRight() {
               <p className="hint" style={{ marginTop: 4 }}>枠の下の境目をドラッグしても変えられます。</p>
             </div>
             <p className="hint" style={{ marginBottom: 10 }}>この枠の部品：{cnt} 個</p>
-            <button className="danger" onClick={() => deleteLane(l.id)}>この枠を削除</button>
-            {confirmDel === l.id && (
-              <p className="hint warn">部品が {cnt} 個あります。もう一度「この枠を削除」を押すと部品ごと消えます。</p>
-            )}
+            <button className="danger" onClick={() => deleteLane(l.id)}>この枠を削除…</button>
           </section>
         </aside>
       );

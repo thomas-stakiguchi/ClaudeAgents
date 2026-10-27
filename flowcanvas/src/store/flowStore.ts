@@ -26,7 +26,7 @@ export type State = {
   future: Flow[];
   exporting: false | ExportOptions; // 画像書き出し中は選択枠やポートを消し、設定に合わせて見出しなどを出す
   flash: string | null;
-  confirmDel: string | null; // 2回押しで削除するときの1回目の対象（レーン id か 'flow'）
+  confirmDel: string | null; // 削除の確認を出している対象（レーン id か 'flow'）
   modal: 'export' | 'import' | 'guide' | null; // 開いている小窓
 };
 
