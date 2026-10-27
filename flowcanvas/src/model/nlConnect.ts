@@ -99,7 +99,7 @@ export function parseConnect(text: string, nodes: Node[]): NlResult {
     cmd.to = b.node;
   }
   if (!cmd.from && cmd.kind === undefined && cmd.color === undefined && cmd.label === undefined && cmd.route === undefined) {
-    return { ok: false, error: '読み取れませんでした。例：「見積を作成すると商談を点線で繋ぐ。線は赤。」' };
+    return { ok: false, error: '読み取れませんでした。例：「見積を作成すると商談を点線で繋ぐ。線は赤。ラベルは金額を登録」' };
   }
   return { ok: true, cmd };
 }

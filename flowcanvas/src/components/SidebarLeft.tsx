@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { EdgeKind, LaneKind, NodeType, Route } from '../model/types';
 import { addLane, addNode, deleteLane, moveLane, runSentence, targetLane } from '../store/actions';
 import { setState, useStore } from '../store/flowStore';
@@ -197,8 +197,28 @@ function LineTools() {
   );
 }
 
+/* 文に足せる言葉。押すと文の最後に足す（何が書けるかを見せるため） */
+const WORDS: { name: string; add: string }[] = [
+  { name: '点線', add: '点線で繋ぐ' },
+  { name: '直角', add: '直角で' },
+  { name: '色', add: '線は赤' },
+  { name: 'ラベル', add: 'ラベルは' },
+];
+
 function Sentence() {
   const [text, setText] = useState('');
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const append = (w: string) => {
+    const t = text.trimEnd();
+    const next = t && !/[。、\s]$/.test(t) ? `${t}。${w}` : t + w;
+    setText(next);
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.length, next.length);
+    });
+  };
   const [msg, setMsg] = useState<{ ok: boolean; message: string } | null>(null);
   const run = () => {
     if (!text.trim()) return;
@@ -210,9 +230,10 @@ function Sentence() {
     <div className="nl">
       <textarea
         id="nl-text"
+        ref={ref}
         aria-label="文章でつなぐ"
         value={text}
-        placeholder="例：作業とデータを点線で繋ぐ。線は赤。"
+        placeholder={'例：商談と受注を点線で繋ぐ。\n線は赤。ラベルは自動連携'}
         onChange={(e) => {
           setText(e.target.value);
           if (msg && !msg.ok) setMsg(null); // 書き直したらエラーは消す
@@ -225,6 +246,14 @@ function Sentence() {
           }
         }}
       />
+      <div className="nl-words" role="group" aria-label="文に足せる言葉">
+        <span>足せる言葉</span>
+        {WORDS.map((w) => (
+          <button key={w.name} className="chip" title={`「${w.add}」を文の最後に足す`} onClick={() => append(w.add)}>
+            ＋{w.name}
+          </button>
+        ))}
+      </div>
       <div className="nl-foot">
         <button className="link sm" onClick={() => setState({ modal: 'guide' })}>書き方</button>
         <button className="btn primary sm" onClick={run}>つなぐ</button>
