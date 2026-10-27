@@ -8,6 +8,7 @@
     "dev:server": "tsx watch server/index.ts",
     "dev:web": "vite",
     "build": "tsc -b && vite build",
+    "build:file": "tsc -b && vite build --mode standalone && node -e \"require('fs').renameSync('release/index.html','release/FlowCanvas.html')\"",
     "start": "tsx server/index.ts",
     "typecheck": "tsc -b",
     "import": "tsx scripts/flow-import.ts",
@@ -32,6 +33,7 @@
     "concurrently": "^10.0.6",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vite": "^5.4.21"
+    "vite": "^5.4.21",
+    "vite-plugin-singlefile": "2.3.3"
   }
 }

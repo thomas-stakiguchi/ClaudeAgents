@@ -4,6 +4,7 @@ import {
   type State,
 } from '../store/flowStore';
 import { saveAskFile, saveFlowFile } from '../export/fileSave';
+import { STANDALONE } from '../store/localApi';
 import { loadExportOptions, saveExportOptions, type ExportOptions } from '../export/options';
 import { applyTheme, loadTheme, type Theme } from '../theme';
 import { canvasApi } from './Canvas';
@@ -18,7 +19,7 @@ const SAVE_LABEL = { saved: '保存済', dirty: '未保存', saving: '保存中�
 
 export async function saveWithMessage() {
   const ok = await saveNow();
-  if (!ok) flash('保存できませんでした。npm run dev が動いているか確認してください');
+  if (!ok) flash(STANDALONE ? '保存できませんでした。ブラウザの保存領域がいっぱいか、保存が許可されていません' : '保存できませんでした。npm run dev が動いているか確認してください');
   else if (getState().askFile) setState({ saveNote: true });
   else flash('保存しました');
 }
