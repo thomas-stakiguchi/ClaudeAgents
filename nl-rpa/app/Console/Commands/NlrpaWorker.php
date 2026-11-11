@@ -38,6 +38,7 @@ class NlrpaWorker extends Command
         }
         $pid = getmypid();
         $e->store->registerWorker($pid, $id);
+        $e->ledger->append('worker', 'request:'.$id, (object) ['event' => 'started', 'pid' => $pid, 'os_user' => Engine::osUser(), 'host' => gethostname() ?: 'unknown']);
         $result = ['status' => 'aborted', 'reasons' => ['ワーカーが異常終了しました']];
         try {
             if ($req['kind'] === 'run') {
@@ -52,6 +53,9 @@ class NlrpaWorker extends Command
                     : StubRegistrations::dummyRows();
             }
             $p = $e->store->getPlan($planHash) ?? throw new \RuntimeException('計画がありません');
+            if (! Engine::inputsAreCurrent($p['inputs'])) {
+                throw new \RuntimeException('許可リスト・個別登録が、承認のときから変わっています。計画を作り直して、再承認してください');
+            }
             $runner = $e->newRunner($e->newBrowser());
             $report = $req['kind'] === 'run'
                 ? $runner->run($p['plan'], $p['inputs'], (string) $req['run_id'], $rows)
@@ -60,6 +64,7 @@ class NlrpaWorker extends Command
         } catch (\Throwable $t) {
             $result = ['status' => 'aborted', 'reasons' => ['例外: '.$t->getMessage()]];
         } finally {
+            $e->ledger->append('worker', 'request:'.$id, (object) ['event' => 'finished', 'status' => $result['status'], 'reasons' => $result['reasons'], 'pid' => $pid, 'os_user' => Engine::osUser(), 'host' => gethostname() ?: 'unknown']);
             $e->store->finishRequest($id, $result);
             $e->store->unregisterWorker($pid);
         }

@@ -23,4 +23,22 @@ abstract class Controller
     {
         return Engine::osUser();
     }
+
+    /** 文字列（と整数）の入力だけを受け取る。配列などで送られたら、空として扱う（500にしない）。 */
+    protected function str(Request $request, string $key): string
+    {
+        $v = $request->input($key, '');
+
+        return is_string($v) ? $v : (is_int($v) ? (string) $v : '');
+    }
+
+    /**
+     * 追記のみの記録（SEC-13）。いつ・誰が・どのOSユーザー・どのPCで、を必ず入れる。
+     *
+     * @param array<string,mixed> $payload
+     */
+    protected function audit(string $kind, string $subject, string $by, array $payload = []): void
+    {
+        $this->engine->ledger->append($kind, $subject, (object) ($payload + ['by' => $by, 'os_user' => $this->osUser(), 'host' => gethostname() ?: 'unknown']));
+    }
 }

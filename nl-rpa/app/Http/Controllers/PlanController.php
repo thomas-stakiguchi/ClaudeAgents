@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\Engine;
 use App\Support\PlanPresenter;
 use Illuminate\Http\Request;
 use Src\Ai\AiPlanGate;
@@ -35,8 +36,17 @@ class PlanController extends Controller
             return back()->withErrors(['scenario' => '実行計画を受け入れられません: '.implode(' / ', array_slice($r['errors'], 0, 3))]);
         }
         $hash = $this->engine->store->savePlan($r['plan'], StubRegistrations::hashInputs(), $data['scenario'], $by, $this->osUser());
+        $this->audit('plan_created', $hash, $by, ['ai_model' => $r['plan']->created_by_ai->model, 'ai_prompt_version' => $r['plan']->created_by_ai->prompt_version, 'ai_sent_hash' => 'sha256:'.hash('sha256', $data['scenario'])]);
 
         return redirect('/plans/'.$hash)->with('ok', '実行計画を作りました。内容を確認してください');
+    }
+
+    /** 許可リスト・個別登録が、承認のときから変わっていれば、操作を止める（再承認が必要）。変わっていなければ null */
+    private function staleError(array $p): ?string
+    {
+        return Engine::inputsAreCurrent($p['inputs'])
+            ? null
+            : '許可リスト・個別登録が、この計画を作ったときから変わっています。計画を作り直して、あらためて承認してください';
     }
 
     public function show(string $hash)
@@ -49,6 +59,7 @@ class PlanController extends Controller
         }
 
         return view('plans.show', [
+            'stale' => $this->staleError($p),
             'p' => $p,
             'steps' => PlanPresenter::steps($p['plan'], $p['inputs']),
             'aiSupplied' => PlanPresenter::aiSuppliedIrreversible($p['plan'], $p['inputs']),
@@ -67,13 +78,16 @@ class PlanController extends Controller
     {
         $by = $this->operator($request);
         $p = $this->engine->store->getPlan($hash) ?? abort(404);
+        if (($e = $this->staleError($p)) !== null) {
+            return back()->withErrors(['stale' => $e]);
+        }
         $need = PlanPresenter::aiSuppliedIrreversible($p['plan'], $p['inputs']);
         $acked = array_values(array_filter((array) $request->input('ack', []), 'is_string'));
         $missing = array_values(array_diff($need, $acked));
         if ($missing !== []) {
             return back()->withErrors(['ack' => '「AIが補った」取り消せない手順を、1つずつ確認してください: '.implode('、', $missing)]);
         }
-        $this->engine->ledger->append('approval', $hash, (object) ['stage' => 'plan', 'approver' => $by, 'os_user' => $this->osUser(), 'acked_steps' => $need]);
+        $this->engine->ledger->append('approval', $hash, (object) ['stage' => 'plan', 'approver' => $by, 'os_user' => $this->osUser(), 'acked_steps' => $need, 'same_person_as_author' => $by === $p['created_by'], 'host' => gethostname() ?: 'unknown']);
 
         return back()->with('ok', '計画を承認しました。ドライランに進めます');
     }
@@ -82,16 +96,20 @@ class PlanController extends Controller
     public function dryRun(Request $request, string $hash)
     {
         $by = $this->operator($request);
-        $this->engine->store->getPlan($hash) ?? abort(404);
+        $p = $this->engine->store->getPlan($hash) ?? abort(404);
+        if (($e = $this->staleError($p)) !== null) {
+            return back()->withErrors(['stale' => $e]);
+        }
         if (! $this->engine->approvals->hasPlanApproval($hash)) {
             return back()->withErrors(['dry' => '先に、計画を承認してください']);
         }
-        $inputId = $request->filled('input_set_id') ? (int) $request->input('input_set_id') : null;
+        $inputId = $request->filled('input_set_id') ? (int) $this->str($request, 'input_set_id') : null;
         if ($inputId !== null && $this->engine->store->getInputSet($inputId) === null) {
             return back()->withErrors(['dry' => '入力データがありません']);
         }
         $dryRunId = 'DR-'.gmdate('Ymd-His').'-'.bin2hex(random_bytes(3));
         $id = $this->engine->store->createRequest('dry_run', $hash, $inputId, null, $dryRunId, $by);
+        $this->audit('request_created', 'request:'.$id, $by, ['kind' => 'dry_run', 'plan_hash' => $hash, 'dry_run_id' => $dryRunId, 'input_set_id' => $inputId]);
 
         return back()->with('ok', "ドライランの要求を作りました（要求番号 {$id}）。コンソールで php artisan nlrpa:worker {$id} を実行してください");
     }
@@ -101,14 +119,17 @@ class PlanController extends Controller
     {
         $by = $this->operator($request);
         $p = $this->engine->store->getPlan($hash) ?? abort(404);
-        $dryRunId = (string) $request->input('dry_run_id', '');
+        if (($e = $this->staleError($p)) !== null) {
+            return back()->withErrors(['stale' => $e]);
+        }
+        $dryRunId = $this->str($request, 'dry_run_id');
         $res = $this->engine->approvals->findPassedDryRun($hash, $dryRunId);
         if ($res['error'] !== null) {
             return back()->withErrors(['final' => '合格したドライランを選んでください: '.$res['error']]);
         }
         $this->engine->ledger->append('approval', $hash, (object) [
             'stage' => 'final', 'approver' => $by, 'os_user' => $this->osUser(), 'dry_run_id' => $dryRunId,
-            'same_person_as_author' => $by === $p['created_by'],
+            'same_person_as_author' => $by === $p['created_by'], 'host' => gethostname() ?: 'unknown',
         ]);
 
         return back()->with('ok', '最終承認しました');
@@ -118,14 +139,14 @@ class PlanController extends Controller
     public function preview(Request $request, string $hash)
     {
         $p = $this->engine->store->getPlan($hash) ?? abort(404);
-        $set = $this->engine->store->getInputSet((int) $request->query('input_set_id')) ?? abort(404);
-        $res = $this->engine->approvals->findPassedDryRun($hash, (string) $request->query('dry_run_id', ''));
+        $set = $this->engine->store->getInputSet((int) (is_string($request->query('input_set_id')) ? $request->query('input_set_id') : 0)) ?? abort(404);
+        $res = $this->engine->approvals->findPassedDryRun($hash, (is_string($request->query('dry_run_id')) ? $request->query('dry_run_id') : ''));
         if (! $this->engine->approvals->hasFinalApproval($hash) || $res['error'] !== null) {
             return redirect('/plans/'.$hash)->withErrors(['final' => '最終承認と、合格したドライランが必要です']);
         }
 
         return view('plans.preview', [
-            'p' => $p, 'set' => $set, 'dryRunId' => (string) $request->query('dry_run_id'),
+            'p' => $p, 'set' => $set, 'dryRunId' => (is_string($request->query('dry_run_id')) ? $request->query('dry_run_id') : ''),
             'sum' => RunRegistrar::summarize($p['plan'], $set['rows']),
             'limits' => $p['plan']->limits,
         ]);
@@ -136,18 +157,22 @@ class PlanController extends Controller
     {
         $by = $this->operator($request);
         $p = $this->engine->store->getPlan($hash) ?? abort(404);
-        $set = $this->engine->store->getInputSet((int) $request->input('input_set_id')) ?? abort(404);
-        $count = trim((string) $request->input('count', ''));
+        if (($e = $this->staleError($p)) !== null) {
+            return back()->withErrors(['stale' => $e]);
+        }
+        $set = $this->engine->store->getInputSet((int) $this->str($request, 'input_set_id')) ?? abort(404);
+        $count = trim($this->str($request, 'count'));
         if (! preg_match('/\A[0-9]+\z/', $count) || (int) $count !== count($set['rows'])) {
             return back()->withErrors(['count' => '件数が一致しません。プレビューの件数を、数字で入力してください']);
         }
-        $dryRunId = (string) $request->input('dry_run_id', '');
+        $dryRunId = $this->str($request, 'dry_run_id');
         $runId = 'RUN-'.gmdate('Ymd-His').'-'.bin2hex(random_bytes(3));
         $errors = $this->engine->registrar->register($runId, $p['plan'], $p['inputs'], $dryRunId, 'stub', $set['rows']);
         if ($errors !== []) {
             return back()->withErrors(['register' => '登録できません: '.implode(' / ', array_slice($errors, 0, 5))]);
         }
         $this->engine->store->saveRun($runId, $hash, $set['id'], $dryRunId, $by);
+        $this->audit('run_registered', $runId, $by, ['plan_hash' => $hash, 'input_set_id' => $set['id'], 'input_sha256' => $set['sha256'], 'dry_run_id' => $dryRunId, 'rows' => count($set['rows'])]);
 
         return redirect('/runs/'.$runId)->with('ok', '実行を登録しました');
     }

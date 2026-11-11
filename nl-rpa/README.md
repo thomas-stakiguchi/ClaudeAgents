@@ -14,7 +14,7 @@
 
 ## 準備
 
-必要なもの：PHP（拡張：`pdo_sqlite`、`mbstring`、`intl`）、Composer。
+必要なもの：PHP（拡張：`pdo_sqlite`、`mbstring`、`intl`、`posix`）、Composer。
 
 ```bash
 composer install
@@ -22,14 +22,9 @@ cp .env.example .env
 php artisan key:generate
 ```
 
-`.env` の `NL_RPA_DATA_DIR` に、**リポジトリの外**の、絶対パスを書きます。ログ、記録、入力データ、アクセストークンのハッシュが、ここに入ります。
+`.env` の `NL_RPA_DATA_DIR` に、**リポジトリの外**の、絶対パスを書きます。ログ、セッション、記録、入力データ、アクセストークンのハッシュが、ここに入ります。未設定、または、リポジトリの中を指していると、画面は起動しません。
 
-php.ini（コマンドライン用）に、次を設定します。確認は `php -i` です。起動コマンドは、設定が違うと起動しません。
-
-```ini
-session.upload_progress.enabled = 0
-display_errors = Off
-```
+`APP_DEBUG=false` のままにしてください（`true` だと、起動しません）。
 
 ## 起動
 
@@ -37,9 +32,19 @@ display_errors = Off
 php artisan nlrpa:serve
 ```
 
-`http://localhost:8080` を開いて、コンソールに表示された**アクセストークン**を入力します。再起動すると、トークンは変わります。127.0.0.1 だけで待ち受けます。
+`http://localhost:8080` を開いて、コンソールに表示された**アクセストークン**を入力します。再起動すると、トークンは変わります。127.0.0.1 だけで待ち受けます。止めるときは、Ctrl+C を押します。
+
+起動コマンドは、`php -S` を直接起動し、次の設定を `-d` で渡します（php.ini を直す必要は、ありません）。要求を処理するPHPの設定は、毎回、確かめます。
+
+- `session.upload_progress.enabled=0`（php.netの告知による。LOC-7）
+- `display_errors=0`、`expose_php=0`
+
+`php -S` は開発用のサーバーです。ローカルのテスト用途に限ります。`public/` の中の静的ファイル（`nlrpa.css`）は、`php -S` が直接返すため、Hostの検査やセキュリティヘッダが付きません。`public/` に、秘密を置かないでください。
 
 ## 使い方
+
+**初回の1件**は、その実行で、最初に実行した行です。前の実行で成功した行は、数えません。
+**要確認**の行は、画面で「実行済み」か「未実行」を判定します（「処理中」は判定できません）。
 
 1. 画面で、シナリオを書いて「実行計画を作る」を押す
 2. 計画を確認して、承認する（AIが補った取り消せない手順は、1つずつ確認する）
@@ -63,7 +68,7 @@ php artisan nlrpa:worker 1
 | `php artisan nlrpa:worker {要求の番号}` | 要求を1件処理する |
 | `php artisan nlrpa:emergency-stop` | 緊急停止。キルスイッチを立て、ワーカーと子プロセスを終了する（Linuxのみ） |
 | `php artisan nlrpa:kill-switch off` | キルスイッチの解除 |
-| `php artisan nlrpa:recover` | 異常終了のあとの後始末（処理中→要確認） |
+| `php artisan nlrpa:recover` | 異常終了のあとの後始末（処理中→要確認）。「処理中」の行は、これを実行してから、画面で判定する |
 
 画面の「停止」ボタンは、停止の旗を立てるだけです（実行中の手順が終わった時点で止まります）。すぐに止めたいときは、緊急停止を使ってください。
 
@@ -76,5 +81,4 @@ php artisan test
 ## 注意
 
 - 顧客名や単価などの機密を、シナリオに書かないでください
-- `php artisan serve` は、開発用のサーバーです。ローカルのテスト用途に限ります
 - 動作確認は、PHP 8.5.12 以上の 8.5 系で行う決まりです（仕様14-6）。**この環境では、8.3.6 でしか確認できていません**

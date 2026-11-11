@@ -52,6 +52,15 @@ final class StepStateStore
         return $r ? (string) $r['state'] : null;
     }
 
+    /** @return list<string> この実行（run_id）で、状態の表に載っている手順ID（重複なし） */
+    public function stepIdsOfRun(string $runId): array
+    {
+        $st = $this->db->pdo->prepare('SELECT DISTINCT step_id FROM step_states WHERE run_id = ? ORDER BY step_id');
+        $st->execute([$runId]);
+
+        return array_map(static fn (array $r): string => (string) $r['step_id'], $st->fetchAll());
+    }
+
     /** 同じ業務キーに、未解消（処理中・要確認）がある手順IDの一覧（別の版・別のシナリオも含む。9-4、10-3） */
     public function unresolvedFor(string $businessKey): array
     {
@@ -99,11 +108,15 @@ final class StepStateStore
         $this->transition($businessKey, $stepId, [self::PROCESSING], self::NEEDS_REVIEW);
     }
 
-    /** 人の判定（10-2）。「実行済み」→ 成功、「未実行」→ 失敗（再実行の対象） */
+    /**
+     * 人の判定（10-2）。「実行済み」→ 成功、「未実行」→ 失敗（再実行の対象）。
+     * 対象は「要確認」だけ。「処理中」は、ワーカーが動いている間かもしれないので、先に recoverAfterCrash で「要確認」にしてから判定する
+     * （動いているワーカーの操作を、「未実行」と判定して、二重に実行させないため）。
+     */
     public function resolve(string $businessKey, string $stepId, bool $executed, string $judge): void
     {
         $businessKey = BusinessKey::fold($businessKey);
-        $this->transition($businessKey, $stepId, [self::NEEDS_REVIEW, self::PROCESSING], $executed ? self::SUCCEEDED : self::FAILED, $judge);
+        $this->transition($businessKey, $stepId, [self::NEEDS_REVIEW], $executed ? self::SUCCEEDED : self::FAILED, $judge);
     }
 
     /** 異常終了のあと、次の起動時に、「処理中」を「要確認」に変える（14-3の5）。変えた件数を返す */

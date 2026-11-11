@@ -19,7 +19,7 @@ class AuthController extends Controller
         if (RateLimiter::tooManyAttempts($key, (int) config('nlrpa.login_max_attempts'))) {
             return back()->withErrors(['token' => '失敗が続いたため、しばらく入力できません']);
         }
-        $token = (string) $request->input('token', '');
+        $token = $this->str($request, 'token');
         if ($token === '' || ! $tokens->verify($token)) {
             RateLimiter::hit($key, 300);
 

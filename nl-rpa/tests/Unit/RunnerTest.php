@@ -128,8 +128,7 @@ class RunnerTest extends TestCase
         $this->assertSame(RunReport::COMPLETED, $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows)->status);
 
         $this->assertSame([], $this->registrar->register('RUN-2', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
-        $this->runner->confirmFirstRow('RUN-2', '佐藤', 'tester');
-        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-2', $this->rows);
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-2', $this->rows); // 全部、前の実行で成功済み。確認は要らない
         $this->assertSame(['skipped', 'skipped', 'skipped'], array_column($r->rows, 'status'));
         $this->assertCount(3, $this->browser->orders());
     }
@@ -209,20 +208,60 @@ class RunnerTest extends TestCase
         $this->assertCount(1, $this->browser->orders());
 
         $this->browser->failAfterClick = false;
-        $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
         $r2 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::HALTED, $r2->status);
         $this->assertCount(1, $this->browser->orders(), '要確認のままの行を、再実行してはいけない');
+        // 要確認のままでは、初回の確認もできない
+        try {
+            $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
+            $this->fail('要確認の行は、確認できない');
+        } catch (\LogicException) {
+            $this->assertTrue(true);
+        }
 
-        // 人が「実行済み」と判定したら、成功になり、飛ばされる。判定のあとに、あらためて初回の確認が要る
+        // 人が「実行済み」と判定したら、成功になる。次の行へ進むには、あらためて初回の確認が要る
         $this->states->resolve('K-001', 'S-005', true, '佐藤');
-        $stale = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
-        $this->assertSame(RunReport::HALTED, $stale->status, '判定より前の確認は無効');
+        $r3 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r3->status);
         $this->assertCount(1, $this->browser->orders());
         $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
-        $r3 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
-        $this->assertSame(RunReport::COMPLETED, $r3->status, implode(' / ', $r3->reasons));
+        $r4 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::COMPLETED, $r4->status, implode(' / ', $r4->reasons));
         $this->assertCount(3, $this->browser->orders());
+    }
+
+    public function test_処理中は人の判定ができない_動いているワーカーの操作を未実行にさせない(): void
+    {
+        $this->prepareRun();
+        $this->states->markProcessing('K-009', 'S-005', 'h', 'RUN-1');
+        $this->expectException(\LogicException::class);
+        $this->states->resolve('K-009', 'S-005', false, '佐藤');
+    }
+
+    public function test_前の実行で成功した行がある再実行でも_この実行の最初の1件で止まる(): void
+    {
+        // 前の実行で K-001 だけ成功
+        $this->prepareRun();
+        $this->runner->run($this->plan, $this->inputs, 'RUN-1', array_slice($this->rows, 0, 3));
+        $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
+        $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertCount(3, $this->browser->orders());
+        // 新しい行（K-004, K-005）を足した、新しい実行
+        $rows = [...$this->rows, ['商品コード' => 'JKL', '数量' => '1', '伝票番号' => 'K-004'], ['商品コード' => 'MNO', '数量' => '2', '伝票番号' => 'K-005']];
+        $this->assertSame([], $this->registrar->register('RUN-2', $this->plan, $this->inputs, 'DR-1', 'stub', $rows));
+        // 確認を押そうとしても、この実行ではまだ何も実行していないので、受け付けない
+        try {
+            $this->runner->confirmFirstRow('RUN-2', '佐藤', 'tester');
+            $this->fail('まだ何も実行していないので、確認できない');
+        } catch (\LogicException) {
+            $this->assertTrue(true);
+        }
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-2', $rows);
+        $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r->status, '新しい行は、1件だけ実行して止まる');
+        $this->assertCount(4, $this->browser->orders());
+        $this->runner->confirmFirstRow('RUN-2', '佐藤', 'tester');
+        $this->assertSame(RunReport::COMPLETED, $this->runner->run($this->plan, $this->inputs, 'RUN-2', $rows)->status);
+        $this->assertCount(5, $this->browser->orders());
     }
 
     public function test_クリックしても確認条件を満たさなければ要確認になる(): void

@@ -19,8 +19,11 @@
  <td>
   @if ($st === 'succeeded') <span class="badge good">成功</span>
   @elseif ($st === 'failed') <span class="badge bad">失敗（再実行の対象）</span>
-  @elseif ($st === 'needs_review' || $st === 'processing')
-    <span class="badge wait">{{ $st === 'processing' ? '処理中' : '要確認' }}</span>
+  @elseif ($st === 'processing')
+    <span class="badge wait">処理中</span>
+    <small>ワーカーが動いている間かもしれません。止まっていることを確かめて、コンソールで <code>php artisan nlrpa:recover</code> を実行すると、「要確認」になります。</small>
+  @elseif ($st === 'needs_review')
+    <span class="badge wait">要確認</span>
     <form method="post" action="/runs/{{ $run['run_id'] }}/resolve">
       @csrf
       <input type="hidden" name="business_key" value="{{ $r['key'] }}"><input type="hidden" name="step_id" value="{{ $sid }}">
@@ -50,6 +53,13 @@
 </div>
 
 @if (count($requests) > 0)
+<h2>実行の結果</h2>
+@php($lastRows = null)
+@foreach ($requests as $q)@if ($lastRows === null && isset($q['result']['rows']) && count($q['result']['rows']) > 0)@php($lastRows = $q['result']['rows'])@endif @endforeach
+@if ($lastRows !== null)
+<table><tr><th>業務キー</th><th>状態</th><th>画面から読んだ値（発注番号など）</th></tr>
+@foreach ($lastRows as $row)<tr><td>{{ $row['business_key'] }}</td><td>{{ $row['status'] }}</td><td>@foreach ($row['reads'] as $k => $v) {{ $k }}：{{ $v }} @endforeach</td></tr>@endforeach</table>
+@endif
 <h2>実行の記録</h2>
 <table><tr><th>要求</th><th>状態</th><th>結果</th><th>理由</th></tr>
 @foreach ($requests as $q)

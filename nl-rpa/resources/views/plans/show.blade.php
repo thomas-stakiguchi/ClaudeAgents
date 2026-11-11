@@ -16,6 +16,9 @@
   @endif
 </div>
 
+@if ($stale) <p class="err">{{ $stale }}</p> @endif
+<p class="warn">二重実行の防止は、「ローカルの記録だけが頼り」です。対象システム側に、同じ業務キーがあるかを照会する仕組みは、ありません（9-4）。</p>
+
 <h2>シナリオ（元の文）</h2>
 <div class="card"><pre>{{ $p['scenario'] }}</pre></div>
 

@@ -204,19 +204,12 @@ final class IrreversibleGuard
         $l = $plan->limits;
         $total = is_array($run->rows ?? null) ? count($run->rows) : 0;
         (! isset($l->max_rows_per_run) || $total > $l->max_rows_per_run) && $reasons[] = '件数の上限を超えます（または、上限が計画にありません）';
-        if ($index !== null && $index >= 1) {
-            $first = $run->rows[0]->business_key ?? null;
-            $confirm = $this->ledger->latestWithSeq('first_row_confirmed', $r->runId);
-            $firstState = is_string($first) ? $this->ledger->latestWithSeq('state', StepStateStore::subject($first, $r->stepId)) : null;
-            if ($confirm === null) {
-                $reasons[] = '初回の1件の確認が済んでいません';
-            } elseif (! is_string($confirm['payload']->by ?? null) || $confirm['payload']->by === '' || ! is_string($confirm['payload']->os_user ?? null) || $confirm['payload']->os_user === '') {
-                $reasons[] = '初回の1件の確認の記録に、確認者がありません';
-            } elseif ($firstState === null || ($firstState['payload']->state ?? null) !== StepStateStore::SUCCEEDED || ! is_string($first) || $this->states->get($first, $r->stepId) !== StepStateStore::SUCCEEDED) {
-                $reasons[] = '初回の1件が、成功していません';
-            } elseif ($confirm['seq'] < $firstState['seq']) {
-                $reasons[] = '初回の1件の確認が、その1件の成功より前に記録されています';
-            }
+        // 初回の1件：この実行で、すでに別の行に手を付けているなら、その初回の1件が成功し、確認されていること
+        $gate = new FirstRowGate($this->ledger, $this->states);
+        $rowsRec = is_array($run->rows ?? null) ? $run->rows : [];
+        $others = array_values(array_diff($gate->executedKeys($r->runId, $rowsRec, $r->stepId), [$r->businessKey]));
+        if ($others !== [] && ! $gate->isConfirmed($r->runId, $rowsRec, $r->stepId)) {
+            $reasons[] = '初回の1件の確認が済んでいません（この実行で先に実行した行が、成功し、確認されるまで、次へ進めません）';
         }
 
         if ($reasons !== []) {

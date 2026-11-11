@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\Engine;
 use App\Support\PlanPresenter;
 use Illuminate\Http\Request;
 use Src\Runner\PlanRunner;
@@ -57,25 +58,27 @@ class RunController extends Controller
                 return back()->withErrors(['start' => 'この実行には、待ち・実行中の要求がすでにあります']);
             }
         }
+        if (! Engine::inputsAreCurrent($d['p']['inputs'])) {
+            return back()->withErrors(['start' => '許可リスト・個別登録が、承認のときから変わっています。計画を作り直して、再承認してください']);
+        }
         $id = $this->engine->store->createRequest('run', $d['run']['plan_hash'], (int) $d['run']['input_set_id'], $runId, $d['run']['dry_run_id'], $by);
+        $this->audit('request_created', 'request:'.$id, $by, ['kind' => 'run', 'run_id' => $runId, 'plan_hash' => $d['run']['plan_hash']]);
 
         return back()->with('ok', "実行の要求を作りました（要求番号 {$id}）。コンソールで php artisan nlrpa:worker {$id} を実行してください");
     }
 
-    /** 初回の1件の確認。1件目の取り消せない手順が、すべて成功していることが条件 */
+    /**
+     * 初回の1件の確認。確認の対象は、この実行で最初に実行した行。その行の取り消せない手順が、すべて「成功」であることが条件。
+     * 前の実行で成功した行は、対象にならない（この実行では、まだ何も実行していないかもしれない）。
+     */
     public function confirmFirst(Request $request, string $runId)
     {
         $by = $this->operator($request);
         $d = $this->load($runId);
-        $first = $d['rows'][0]->business_key ?? null;
-        $ok = $first !== null && $d['irr'] !== [];
-        foreach ($d['irr'] as $sid) {
-            $ok = $ok && $this->engine->states->get((string) $first, $sid) === StepStateStore::SUCCEEDED;
+        $err = PlanRunner::recordFirstRowConfirmation($this->engine->ledger, $this->engine->states, $runId, $d['rows'], $d['irr'], $by, $this->osUser());
+        if ($err !== null) {
+            return back()->withErrors(['confirm' => $err]);
         }
-        if (! $ok) {
-            return back()->withErrors(['confirm' => '1件目の結果が「成功」になっていないため、確認できません']);
-        }
-        PlanRunner::recordFirstRowConfirmation($this->engine->ledger, $runId, $by, $this->osUser());
 
         return back()->with('ok', '初回の1件を確認しました。残りを実行できます');
     }
@@ -85,15 +88,16 @@ class RunController extends Controller
     {
         $by = $this->operator($request);
         $d = $this->load($runId);
-        $key = (string) $request->input('business_key', '');
-        $step = (string) $request->input('step_id', '');
-        $verdict = (string) $request->input('verdict', '');
+        $key = $this->str($request, 'business_key');
+        $step = $this->str($request, 'step_id');
+        $verdict = $this->str($request, 'verdict');
         $keys = array_map(fn ($r) => $r->business_key, $d['rows']);
         if (! in_array($key, $keys, true) || ! in_array($step, $d['irr'], true) || ! in_array($verdict, ['executed', 'not_executed'], true)) {
             return back()->withErrors(['resolve' => '対象が正しくありません']);
         }
-        if (! in_array($this->engine->states->get($key, $step), [StepStateStore::NEEDS_REVIEW, StepStateStore::PROCESSING], true)) {
-            return back()->withErrors(['resolve' => '「要確認」「処理中」ではありません']);
+        // 判定できるのは「要確認」だけ。「処理中」は、ワーカーが動いている間かもしれない。先に nlrpa:recover で「要確認」にする
+        if ($this->engine->states->get($key, $step) !== StepStateStore::NEEDS_REVIEW) {
+            return back()->withErrors(['resolve' => '「要確認」ではありません（「処理中」は、ワーカーが止まっていることを確かめて、php artisan nlrpa:recover を実行してから判定してください）']);
         }
         $this->engine->states->resolve($key, $step, $verdict === 'executed', $by.' ('.$this->osUser().')');
 

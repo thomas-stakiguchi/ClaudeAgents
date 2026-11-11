@@ -413,12 +413,191 @@ class WebTest extends TestCase
         $this->assertTrue(true, 'まだ生きている');
     }
 
-    public function test_serveはPHPの設定が危険なら起動しない(): void
+    public function test_serveはデバッグが有効なら起動しない(): void
     {
         $this->engine();
-        ini_set('session.upload_progress.enabled', '1');
+        config(['app.debug' => true]);
         $this->assertSame(1, Artisan::call('nlrpa:serve'));
-        $this->assertStringContainsString('session.upload_progress.enabled=0', Artisan::output());
+        $this->assertStringContainsString('APP_DEBUG=false', Artisan::output());
         $this->assertNull($this->app->make(AccessToken::class)->currentHash(), '起動しないので、トークンは発行されない');
+    }
+
+    public function test_serveの起動コマンドは127_0_0_1だけで待ち受け_安全なPHP設定を渡す(): void
+    {
+        $cmd = \App\Console\Commands\NlrpaServe::serverCommand(8080);
+        $this->assertContains('127.0.0.1:8080', $cmd);
+        $joined = implode(' ', $cmd);
+        $this->assertStringNotContainsString('0.0.0.0', $joined);
+        $this->assertStringNotContainsString('[::]', $joined);
+        foreach (['session.upload_progress.enabled=0', 'display_errors=0', 'expose_php=0'] as $d) {
+            $this->assertContains($d, $cmd);
+        }
+        foreach ($cmd as $part) {
+            $this->assertIsString($part); // 引数の配列。シェルの文字列は、使わない
+        }
+    }
+
+    // ---- Opusレビュー（画面とコマンド）の再現入力 ----
+
+    public function test_この実行でまだ何も実行していなければ初回の確認は受け付けない(): void
+    {
+        $this->login();
+        [$hash, $run1] = $this->preparedRun();
+        $this->post2("/runs/{$run1}/start");
+        $this->worker($this->lastRequestId()); // K-001 が成功（実行1）
+        $this->post2("/runs/{$run1}/confirm-first")->assertSessionHasNoErrors();
+        $this->post2("/runs/{$run1}/start");
+        $this->worker($this->lastRequestId()); // K-002, K-003 も成功（実行1が終わる）
+
+        // 新しい実行2（K-001〜K-003は成功済み、K-004・K-005が新しい）。まだ何も実行していない
+        $dry = $this->engine()->store->getRun($run1)['dry_run_id'];
+        $set2 = $this->csv("商品コード,数量,伝票番号\nABC,1200,K-001\nDEF,30,K-002\nGHI,5,K-003\nJKL,1,K-004\nMNO,2,K-005\n");
+        $r = $this->post2("/plans/{$hash}/register", ['input_set_id' => $set2, 'dry_run_id' => $dry, 'count' => '5']);
+        preg_match('#/runs/(RUN-[0-9]{8}-[0-9]{6}-[0-9a-f]{6})$#', (string) $r->headers->get('Location'), $m);
+        $run2 = $m[1] ?? $this->fail('登録できなかった');
+        $this->post2("/runs/{$run2}/confirm-first")->assertSessionHasErrors('confirm'); // 前の実行の成功は、この実行の初回に数えない
+        $this->post2("/runs/{$run2}/start");
+        $this->assertStringContainsString('awaiting_first_row_confirmation', $this->worker($this->lastRequestId()));
+        $this->assertSame('succeeded', $this->engine()->states->get('K-004', 'S-005'));
+        $this->assertNull($this->engine()->states->get('K-005', 'S-005'), '新しい行は、1件だけ実行して止まる');
+    }
+
+    public function test_処理中は画面から判定できない(): void
+    {
+        $this->login();
+        [$hash, $runId] = $this->preparedRun();
+        $this->engine()->states->markProcessing('K-001', 'S-005', $hash, $runId);
+        $this->post2("/runs/{$runId}/resolve", ['business_key' => 'K-001', 'step_id' => 'S-005', 'verdict' => 'not_executed'])->assertSessionHasErrors('resolve');
+        $this->assertSame('processing', $this->engine()->states->get('K-001', 'S-005'));
+        $this->get($this->base."/runs/{$runId}")->assertSee('nlrpa:recover')->assertDontSee('判定する');
+    }
+
+    public function test_許可リストや個別登録が変わっていれば古い承認は使えない(): void
+    {
+        $this->login();
+        $hash = $this->createPlan();
+        $p = $this->engine()->store->getPlan($hash);
+        // 個別登録が違う内容（古い版）で作られた計画
+        $old = $p['inputs'];
+        $old['registrations'] = (object) ['urls' => [(object) ['destination' => 'stub', 'target' => 'login_page']]];
+        $this->assertFalse(Engine::inputsAreCurrent($old));
+        $oldHash = $this->engine()->store->savePlan($p['plan'], $old, $p['scenario'], '佐藤', 'tester');
+        $this->get($this->base."/plans/{$oldHash}")->assertSee('変わっています');
+        $this->post2("/plans/{$oldHash}/approve-plan")->assertSessionHasErrors('stale');
+        $this->assertFalse($this->engine()->approvals->hasPlanApproval($oldHash));
+    }
+
+    /** 別プロセスのPHP（-d で設定を変える）で、要求を1つ処理させて、状態コードを返す */
+    private function probe(string $ini): string
+    {
+        $dir = sys_get_temp_dir().'/nlrpa_probe_'.bin2hex(random_bytes(3));
+        $cmd = [PHP_BINARY, ...explode(' ', $ini), dirname(__DIR__).'/Support/http_probe.php'];
+        $proc = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, ['NL_RPA_DATA_DIR' => $dir, 'NL_RPA_ENFORCE_PHP_INI' => 'true', 'APP_KEY' => 'base64:'.base64_encode(random_bytes(32)), 'APP_ENV' => 'testing', 'PATH' => (string) getenv('PATH')]);
+        $out = stream_get_contents($pipes[1]).stream_get_contents($pipes[2]);
+        proc_close($proc);
+        $this->rm($dir);
+
+        return trim($out);
+    }
+
+    public function test_要求を処理するPHPの設定が危険なら拒否する(): void
+    {
+        $this->assertSame('503', $this->probe('-d session.upload_progress.enabled=1 -d display_errors=0'));
+        $this->assertSame('503', $this->probe('-d session.upload_progress.enabled=0 -d display_errors=1'));
+        $this->assertSame('200', $this->probe('-d session.upload_progress.enabled=0 -d display_errors=0'));
+    }
+
+    public function test_監査の記録に実行者とPCが残る(): void
+    {
+        $this->login();
+        [$hash, $runId] = $this->preparedRun();
+        $this->post2("/runs/{$runId}/start");
+        $this->worker($this->lastRequestId());
+        $e = $this->engine();
+        foreach ([['plan_created', $hash], ['run_registered', $runId]] as [$kind, $subject]) {
+            $rec = $e->ledger->latest($kind, $subject);
+            $this->assertNotNull($rec, $kind);
+            $this->assertNotSame('', $rec->os_user, $kind);
+            $this->assertNotSame('', $rec->host, $kind);
+            $this->assertSame('佐藤', $rec->by, $kind);
+        }
+        $this->assertStringStartsWith('sha256:', $e->ledger->latest('run_registered', $runId)->input_sha256);
+        $this->assertNotNull($e->ledger->latest('input_imported', 'input:1'));
+        $this->assertNotNull($e->ledger->latest('request_created', 'request:'.$this->lastRequestId()));
+        $w = $e->ledger->all('worker', 'request:'.$this->lastRequestId());
+        $this->assertSame(['started', 'finished'], array_map(fn ($x) => $x->event, $w));
+        $this->assertNotSame('', $w[0]->host);
+        $this->assertTrue($e->ledger->latest('approval', $hash)->same_person_as_author, '作成者と同じ人が承認したことが、記録に残る');
+    }
+
+    public function test_配列で送られても500にならない(): void
+    {
+        $this->login();
+        $hash = $this->createPlan();
+        $r = $this->post($this->base."/plans/{$hash}/register", ['name' => '佐藤', 'input_set_id' => ['x'], 'dry_run_id' => ['x'], 'count' => ['1']], $this->origin());
+        $this->assertContains($r->status(), [302, 404]);
+        $r = $this->post($this->base.'/login', ['token' => ['x']], $this->origin());
+        $this->assertSame(302, $r->status());
+        $r = $this->post($this->base."/plans/{$hash}/approve-final", ['name' => '佐藤', 'dry_run_id' => ['x']], $this->origin());
+        $this->assertSame(302, $r->status());
+    }
+
+    public function test_プレビューの集計がオーバーフローしても落ちない(): void
+    {
+        $plan = \Src\Plan\StrictJson::decode(file_get_contents(base_path('stubs/order_plan.json')));
+        $rows = array_fill(0, 2000, ['商品コード' => 'A', '数量' => '999999999999', '伝票番号' => 'K']);
+        $sum = \Src\Guard\RunRegistrar::summarize($plan, $rows);
+        $this->assertSame(2000, $sum['rows']);
+        $this->assertStringContainsString('大きすぎ', $sum['quantity']);
+    }
+
+    public function test_ポートが使用中ならトークンを発行しない(): void
+    {
+        $this->engine();
+        config(['nlrpa.port' => 18081, 'app.debug' => false, 'nlrpa.enforce_php_ini' => false]);
+        $sock = stream_socket_server('tcp://127.0.0.1:18081');
+        $this->assertNotFalse($sock);
+        try {
+            $this->assertSame(1, Artisan::call('nlrpa:serve'));
+            $this->assertStringContainsString('使用中', Artisan::output());
+            $this->assertNull($this->app->make(AccessToken::class)->currentHash(), 'トークンを発行してはいけない');
+        } finally {
+            fclose($sock);
+        }
+    }
+
+    public function test_緊急停止はワーカーとその子プロセスを終了し_無関係なプロセスは終了しない(): void
+    {
+        if (! is_dir('/proc')) {
+            $this->markTestSkipped('Linux専用');
+        }
+        $this->engine();
+        $spawn = function (array $cmd) {
+            $p = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+            usleep(300000);
+
+            return [$p, proc_get_status($p)['pid']];
+        };
+        // 本物のワーカーに見えるプロセス（コマンドラインが「artisan nlrpa:worker 7」）と、無関係なプロセス
+        [$worker, $wpid] = $spawn([PHP_BINARY, '-r', 'sleep(60);', 'artisan', 'nlrpa:worker', '7']);
+        [$other, $opid] = $spawn([PHP_BINARY, '-r', 'sleep(60);', 'less', 'nlrpa:worker.log']);
+        try {
+            $this->engine()->store->registerWorker($wpid, 7);
+            $this->engine()->store->registerWorker($opid, 7); // 要求番号が合っても、コマンドラインが違えば、対象外
+            Artisan::call('nlrpa:emergency-stop');
+            proc_get_status($worker);
+            usleep(300000);
+            clearstatcache();
+            $wstat = (string) @file_get_contents("/proc/{$wpid}/stat");
+            $this->assertTrue($wstat === '' || str_contains($wstat, ') Z'), 'ワーカーが終了していない: '.substr($wstat, 0, 40));
+            $ostat = (string) @file_get_contents("/proc/{$opid}/stat");
+            $this->assertTrue($ostat !== '' && ! str_contains($ostat, ') Z'), '無関係なプロセスを終了してしまった');
+            $this->assertSame([], $this->engine()->store->workers());
+        } finally {
+            @proc_terminate($other, 9);
+            @proc_terminate($worker, 9);
+            @proc_close($other);
+            @proc_close($worker);
+        }
     }
 }

@@ -20,6 +20,7 @@
     <php>
         <env name="APP_ENV" value="testing"/>
         <env name="NL_RPA_DATA_DIR" value="/tmp/nlrpa-phpunit-storage"/>
+        <env name="NL_RPA_ENFORCE_PHP_INI" value="false"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>

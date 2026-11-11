@@ -380,7 +380,7 @@ class GuardTest extends TestCase
         $this->assertNotSame([], $this->register('RUN-1'));
     }
 
-    public function test_2行目は初回の1件が成功し確認されるまで拒否(): void
+    public function test_この実行で先に実行した行が成功し確認されるまで_次の行は拒否(): void
     {
         $a = $this->action();
         $req2 = fn () => $this->req([
@@ -388,20 +388,39 @@ class GuardTest extends TestCase
             'rowValues' => $this->rows[1],
             'readbackRaw' => ['item_code' => 'DEF', 'quantity' => '30'],
         ]);
-        $o = $this->guard->run($req2(), $a);
-        $this->assertContains('初回の1件の確認が済んでいません', $o->reasons);
-        // 呼び出し側が行の順番や件数を偽っても、2行目は2行目として扱われる（登録した順番で決まる）。1件目が成功する前の確認は、無効
-        $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '佐藤', 'os_user' => 'tester']);
-        $o = $this->guard->run($req2(), $a);
-        $this->assertContains('初回の1件が、成功していません', $o->reasons);
+        // 1行目を実行して成功する。確認はまだ
         $this->assertTrue($this->guard->run($this->req(), $this->action())->confirmed);
         $o = $this->guard->run($req2(), $a);
-        $this->assertContains('初回の1件の確認が、その1件の成功より前に記録されています', $o->reasons);
-        // 1件目の成功のあとに、確認者つきで確認したら、2件目に進める
+        $this->assertNotEmpty(array_filter($o->reasons, fn ($r) => str_contains($r, '初回の1件の確認が済んでいません')));
+        $this->assertSame(0, $a->calls);
+        // 確認者がない・対象の業務キーがない確認は、無効
         $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '佐藤', 'os_user' => 'tester']);
+        $this->assertNotEmpty($this->guard->run($req2(), $a)->reasons);
+        $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '', 'os_user' => 'tester', 'business_key' => 'K-001']);
+        $this->assertNotEmpty($this->guard->run($req2(), $a)->reasons);
+        // 別の行（成功していない行）を対象にした確認は、無効
+        $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '佐藤', 'os_user' => 'tester', 'business_key' => 'K-002']);
+        $this->assertNotEmpty($this->guard->run($req2(), $a)->reasons);
+        $this->assertSame(0, $a->calls);
+        // 1行目の成功のあとに、確認者・対象つきで確認したら、2行目に進める
+        $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '佐藤', 'os_user' => 'tester', 'business_key' => 'K-001']);
         $this->assertTrue($this->guard->run($req2(), $a)->executed);
-        // 確認者のない記録は、無効
-        $this->assertSame('succeeded', $this->states->get('K-002', 'S-005'));
+    }
+
+    public function test_前の実行で成功した行は初回の1件に数えない(): void
+    {
+        // 前の実行（RUN-0）で、K-001 が成功している状態
+        $this->states->markProcessing('K-001', 'S-005', 'h', 'RUN-0');
+        $this->states->markSucceeded('K-001', 'S-005');
+        $a = $this->action();
+        $req2 = $this->req(['businessKey' => 'K-002', 'rowValues' => $this->rows[1], 'readbackRaw' => ['item_code' => 'DEF', 'quantity' => '30']]);
+        // 今回の実行 RUN-1 では、K-002 が最初に実行する行。確認なしで実行できる（そして、その次からは確認が要る）
+        $this->assertTrue($this->guard->run($req2, $a)->executed);
+        $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '佐藤', 'os_user' => 'tester', 'business_key' => 'K-001']);
+        // K-001 は前の実行の成功なので、確認の対象にならない（この実行の成功ではない）
+        $this->states->markProcessing('K-003', 'S-005', 'h', 'RUN-1');
+        $this->states->markNeedsReview('K-003', 'S-005');
+        $this->assertNotEmpty($this->guard->run($this->req(['businessKey' => 'K-003']), $this->action())->reasons);
     }
 
     // ---- 実行後の異常 ----

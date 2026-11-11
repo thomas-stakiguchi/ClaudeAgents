@@ -28,6 +28,8 @@ use Src\State\StepStateStore;
  */
 final class PlanRunner
 {
+    private readonly \Src\Guard\FirstRowGate $gate;
+
     public function __construct(
         private readonly Ledger $ledger,
         private readonly StepStateStore $states,
@@ -37,18 +39,57 @@ final class PlanRunner
         private readonly BrowserPort $browser,
         private readonly RunLock $lock,
     ) {
+        $this->gate = new \Src\Guard\FirstRowGate($ledger, $states);
     }
 
     /** 初回の1件の確認（人が、結果を確認したあとに記録する。5章の9） */
     public function confirmFirstRow(string $runId, string $by, string $osUser): void
     {
-        self::recordFirstRowConfirmation($this->ledger, $runId, $by, $osUser);
+        $run = $this->ledger->latest('run', $runId) ?? throw new \LogicException('実行が登録されていません');
+        $err = self::recordFirstRowConfirmation($this->ledger, $this->states, $runId, (array) ($run->rows ?? []), $this->firstStepIds($runId), $by, $osUser);
+        if ($err !== null) {
+            throw new \LogicException($err);
+        }
     }
 
-    /** 画面からも、同じ形で記録する（確認者の名前とOSのユーザー名の両方。LOC-3） */
-    public static function recordFirstRowConfirmation(Ledger $ledger, string $runId, string $by, string $osUser): void
+    /** @return list<string> 登録済みの計画（ledgerのrun記録）から引けないため、状態の表に載っている、この実行の手順ID */
+    private function firstStepIds(string $runId): array
     {
-        $ledger->append('first_row_confirmed', $runId, (object) ['by' => $by, 'os_user' => $osUser]);
+        return $this->states->stepIdsOfRun($runId);
+    }
+
+    /**
+     * 初回の1件の確認を記録する（画面からも、同じ形。確認者の名前とOSのユーザー名の両方。LOC-3）。
+     * 確認の対象は、この実行で最初に手を付けた行。その行の取り消せない手順が、すべて「成功」であること。
+     *
+     * @param array<mixed>  $rows    実行の登録の行
+     * @param list<string>  $stepIds 取り消せない手順のID
+     * @return string|null 記録できなければ、理由
+     */
+    public static function recordFirstRowConfirmation(Ledger $ledger, StepStateStore $states, string $runId, array $rows, array $stepIds, string $by, string $osUser): ?string
+    {
+        $gate = new \Src\Guard\FirstRowGate($ledger, $states);
+        $first = null;
+        foreach ($rows as $row) {
+            foreach ($stepIds as $sid) {
+                if (in_array($row->business_key ?? null, $gate->executedKeys($runId, [$row], $sid), true)) {
+                    $first = $row->business_key;
+                    break 2;
+                }
+            }
+        }
+        if (! is_string($first)) {
+            return 'この実行で、まだ実行した行がありません';
+        }
+        foreach ($stepIds as $sid) {
+            $cur = $states->current($first, $sid);
+            if ($cur === null || $cur['run_id'] !== $runId || $cur['state'] !== StepStateStore::SUCCEEDED) {
+                return "最初に実行した行（{$first}）の結果が、すべて「成功」になっていないため、確認できません";
+            }
+        }
+        $ledger->append('first_row_confirmed', $runId, (object) ['by' => $by, 'os_user' => $osUser, 'business_key' => $first]);
+
+        return null;
     }
 
     /**
@@ -217,7 +258,9 @@ final class PlanRunner
                 }
                 continue;
             }
+            $loopIrr = array_values(array_filter($this->stepIds($top->steps), static fn (string $id): bool => in_array($id, $ctx->irreversible, true)));
             foreach ($rows as $i => $values) {
+                $wasFirst = false;
                 $key = (string) ($values[$ctx->keyCol] ?? '');
                 if ($ctx->mode === 'real') {
                     // 登録した順番と件数に従う（呼び出し側の並びを信じない）
@@ -233,12 +276,15 @@ final class PlanRunner
                         $report->rows[] = ['business_key' => $key, 'status' => 'skipped', 'reads' => []];
                         continue;
                     }
-                    if ($i >= 1 && $this->ledger->latest('first_row_confirmed', $ctx->runId) === null) {
+                    // 初回の1件：この実行で、先に手を付けた行があるなら、その行が成功し、確認されるまで、次へ進まない
+                    $others = array_values(array_diff($this->gate->executedKeys($ctx->runId, $ctx->registered, $loopIrr[0] ?? ''), [$key]));
+                    if ($others !== [] && ! $this->gate->isConfirmed($ctx->runId, $ctx->registered, $loopIrr[0] ?? '')) {
                         $report->status = RunReport::AWAITING_FIRST_ROW;
                         $report->reasons[] = '初回の1件の確認が済むまで、残りは実行しません';
 
                         return $report;
                     }
+                    $wasFirst = $others === [];
                 }
                 $reads = [];
                 $rowReport = ['business_key' => $key, 'status' => 'done', 'reads' => &$reads];
@@ -265,7 +311,7 @@ final class PlanRunner
                     return $report->halt('画面を初期状態に戻せません: '.$e->getMessage());
                 }
                 $report->rows[] = $rowReport;
-                if ($ctx->mode === 'real' && $i === 0 && $this->ledger->latest('first_row_confirmed', $ctx->runId) === null && count($rows) > 1) {
+                if ($ctx->mode === 'real' && $wasFirst && $i < count($rows) - 1 && ! $this->gate->isConfirmed($ctx->runId, $ctx->registered, $loopIrr[0] ?? '')) {
                     $report->status = RunReport::AWAITING_FIRST_ROW;
                     $report->reasons[] = '初回は1件だけ実行して止まります。結果を確認してから、残りを実行してください';
 

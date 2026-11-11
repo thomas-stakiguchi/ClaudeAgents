@@ -51,6 +51,7 @@ class InputController extends Controller
             return back()->withErrors(['csv' => 'データの行がありません']);
         }
         $id = $this->engine->store->saveInputSet($rows, $by);
+        $this->audit('input_imported', 'input:'.$id, $by, ['input_set_id' => $id, 'sha256' => $this->engine->store->getInputSet($id)['sha256'], 'rows' => count($rows)]);
 
         return redirect('/')->with('ok', "入力データを取り込みました（番号 {$id}、".count($rows).'行）');
     }

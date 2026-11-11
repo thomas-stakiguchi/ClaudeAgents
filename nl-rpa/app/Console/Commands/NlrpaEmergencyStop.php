@@ -29,30 +29,61 @@ class NlrpaEmergencyStop extends Command
             return self::FAILURE;
         }
         $killed = 0;
+        $failed = 0;
         foreach ($e->store->workers() as $w) {
+            // コマンドラインが「... artisan nlrpa:worker {要求の番号}」と、完全に一致するプロセスだけを対象にする
+            // （PIDが再利用されて、無関係なプロセスになっていても、終了しない）
             $cmd = @file_get_contents('/proc/'.$w['pid'].'/cmdline');
-            if (! is_string($cmd) || ! str_contains($cmd, 'nlrpa:worker')) {
+            $args = is_string($cmd) ? explode("\0", rtrim($cmd, "\0")) : [];
+            $i = array_search('nlrpa:worker', $args, true);
+            $isWorker = $i !== false && ($args[$i + 1] ?? null) === (string) $w['request_id']
+                && count(array_filter($args, static fn (string $a): bool => $a === 'artisan' || str_ends_with($a, '/artisan'))) >= 1;
+            if (! $isWorker) {
                 $this->line("PID {$w['pid']}：すでに終了しているか、ワーカーではありません（飛ばします）");
                 $e->store->unregisterWorker($w['pid']);
                 continue;
             }
+            // 子孫を列挙して終了する。終了のあとに、もう一度列挙して、取りこぼし（列挙のあとに生まれた子）も終了する
             $targets = array_merge(self::descendants($w['pid']), [$w['pid']]);
             foreach ($targets as $pid) {
                 @posix_kill($pid, SIGTERM);
             }
             usleep(500000);
+            $targets = array_values(array_unique(array_merge($targets, self::descendants($w['pid']))));
             foreach ($targets as $pid) {
-                if (is_dir('/proc/'.$pid)) {
+                if (self::isAlive($pid)) {
                     @posix_kill($pid, SIGKILL);
                 }
+            }
+            usleep(200000);
+            $alive = array_values(array_filter($targets, static fn (int $pid): bool => self::isAlive($pid)));
+            if ($alive !== []) {
+                $failed += count($alive);
+                $this->error("PID {$w['pid']} の関連プロセスが、終了できませんでした: ".implode(', ', $alive));
+                continue; // 登録は消さない（もう一度、実行できるように）
             }
             $killed += count($targets);
             $e->store->unregisterWorker($w['pid']);
             $this->line("PID {$w['pid']} と子プロセスを終了しました（".count($targets).'件）');
         }
+        if ($failed > 0) {
+            $this->error("終了できなかったプロセスが {$failed} 件あります。手で終了してください");
+        }
         $this->info("終了したプロセス：{$killed}件。次に php artisan nlrpa:recover で後始末をしてください");
 
-        return self::SUCCESS;
+        return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * プロセスが生きているか。/proc/PID/stat を読んで判定する（is_dir は、PHPのstatキャッシュで、古い結果を返すことがある）。
+     * 終了していて、親が回収していないだけのプロセス（ゾンビ）は、生きていないものとして扱う。
+     */
+    private static function isAlive(int $pid): bool
+    {
+        clearstatcache();
+        $stat = @file_get_contents('/proc/'.$pid.'/stat');
+
+        return is_string($stat) && ! str_contains($stat, ') Z');
     }
 
     /** @return list<int> 子孫のプロセスID */

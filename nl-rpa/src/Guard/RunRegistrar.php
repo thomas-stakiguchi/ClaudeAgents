@@ -61,16 +61,25 @@ final class RunRegistrar
             ($c->role ?? null) === 'amount' && $amtCol = $c->name;
         }
         $q = $a = 0;
+        $over = false;
         foreach ($rows as $row) {
             if (! is_array($row)) {
                 continue;
             }
-            $qtyCol !== null && is_string($row[$qtyCol] ?? null) && ($n = self::parseDecimal($row[$qtyCol], false)) !== null && $q += $n;
-            $amtCol !== null && is_string($row[$amtCol] ?? null) && ($n = self::parseDecimal($row[$amtCol], false)) !== null && $a += $n;
+            if ($qtyCol !== null && is_string($row[$qtyCol] ?? null) && ($n = self::parseDecimal($row[$qtyCol], false)) !== null) {
+                $n > PHP_INT_MAX - $q ? $over = true : $q += $n;
+            }
+            if ($amtCol !== null && is_string($row[$amtCol] ?? null) && ($n = self::parseDecimal($row[$amtCol], false)) !== null) {
+                $n > PHP_INT_MAX - $a ? $over = true : $a += $n;
+            }
         }
         $fmt = static fn (int $n): string => rtrim(rtrim(sprintf('%d.%04d', intdiv($n, self::SCALE), $n % self::SCALE), '0'), '.');
 
-        return ['rows' => count($rows), 'quantity' => $qtyCol === null ? '（数量の列なし）' : $fmt($q), 'amount' => $amtCol === null ? '（金額の列なし）' : $fmt($a)];
+        return [
+            'rows' => count($rows),
+            'quantity' => $qtyCol === null ? '（数量の列なし）' : ($over ? '（大きすぎて数えられません）' : $fmt($q)),
+            'amount' => $amtCol === null ? '（金額の列なし）' : ($over ? '（大きすぎて数えられません）' : $fmt($a)),
+        ];
     }
 
     /** 列の型の検査（付録A-4）。問題があれば、理由 */

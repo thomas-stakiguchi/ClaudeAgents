@@ -15,6 +15,15 @@ class LocalRequestGuard
 {
     public function handle(Request $request, Closure $next): Response
     {
+        // 要求を処理しているPHP自身の設定を確かめる（nlrpa:serve が見るのは、親のプロセスだけ。LOC-7）
+        if (config('nlrpa.enforce_php_ini')) {
+            if (filter_var(ini_get('session.upload_progress.enabled'), FILTER_VALIDATE_BOOLEAN)) {
+                return response('php.ini で session.upload_progress.enabled=0 にしてください（LOC-7）', 503)->header('Content-Type', 'text/plain; charset=UTF-8');
+            }
+            if (filter_var(ini_get('display_errors'), FILTER_VALIDATE_BOOLEAN)) {
+                return response('php.ini で display_errors=Off にしてください（LOC-7）', 503)->header('Content-Type', 'text/plain; charset=UTF-8');
+            }
+        }
         $port = (int) config('nlrpa.port');
         $host = $request->headers->get('host');
         $allowed = ["localhost:{$port}", "127.0.0.1:{$port}", "[::1]:{$port}"];

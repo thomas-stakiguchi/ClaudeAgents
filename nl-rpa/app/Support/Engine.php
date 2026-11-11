@@ -8,6 +8,8 @@ use Src\Browser\FakeBrowser;
 use Src\Guard\ApprovalChecker;
 use Src\Guard\IrreversibleGuard;
 use Src\Guard\RunRegistrar;
+use Src\Plan\CanonicalJson;
+use Src\Policy\StubRegistrations;
 use Src\Runner\PlanRunner;
 use Src\Runner\RunLock;
 use Src\State\AppStore;
@@ -63,6 +65,17 @@ final class Engine
         @chmod($real, 0700);
 
         return $real;
+    }
+
+    /**
+     * 計画と一緒に保存した許可リスト・個別登録・画面の記録が、今の内容と同じか（R5、12-1「版が承認時と同じ」）。
+     * 変わっていれば、古い承認は使えない。計画を作り直して、再承認する。
+     *
+     * @param array<string,mixed> $inputs
+     */
+    public static function inputsAreCurrent(array $inputs): bool
+    {
+        return CanonicalJson::encode((object) $inputs) === CanonicalJson::encode((object) StubRegistrations::hashInputs());
     }
 
     public function runLock(): RunLock

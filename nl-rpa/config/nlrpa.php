@@ -13,6 +13,9 @@ return [
     // 組織全体の件数の最大値（SEC-14）。ルール管理者が決める値（1aは仮の値）
     'org_max_rows' => 10000,
 
+    // 要求を処理するPHPの設定（session.upload_progress.enabled=0、display_errors off）を、毎回確かめる（LOC-7）。試験のときだけ false
+    'enforce_php_ini' => filter_var(env('NL_RPA_ENFORCE_PHP_INI', true), FILTER_VALIDATE_BOOLEAN),
+
     // アクセストークンを間違えてよい回数（5分あたり）
     'login_max_attempts' => 10,
 ];
