@@ -24,4 +24,10 @@ final class GuardOutcome
     {
         return new self(true, $confirmed, []);
     }
+
+    /** 実行したが、実行後の状態を保存できなかった（「処理中」のまま残る。呼び出し側は、実行全体を止めること） */
+    public static function executedButUnsaved(): self
+    {
+        return new self(true, false, ['実行後の状態を保存できませんでした']);
+    }
 }

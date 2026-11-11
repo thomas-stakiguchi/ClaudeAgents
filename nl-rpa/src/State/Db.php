@@ -46,9 +46,22 @@ final class Db
     public function immediate(callable $fn): mixed
     {
         if ($this->depth > 0) {
+            // 入れ子は、セーブポイントで包む。内側が失敗して外側が例外を握りつぶしても、内側の書き込みは残らない
+            $sp = 'sp_'.$this->depth;
+            $this->pdo->exec('SAVEPOINT '.$sp);
             $this->depth++;
             try {
-                return $fn();
+                $r = $fn();
+                $this->pdo->exec('RELEASE '.$sp);
+
+                return $r;
+            } catch (\Throwable $e) {
+                try {
+                    $this->pdo->exec('ROLLBACK TO '.$sp);
+                    $this->pdo->exec('RELEASE '.$sp);
+                } catch (\Throwable) {
+                }
+                throw $e;
             } finally {
                 $this->depth--;
             }

@@ -23,6 +23,22 @@ final class StepStateStore
     {
     }
 
+    /** ledger の subject。区切りの取り違えを避けるため、JSONの配列にする */
+    public static function subject(string $businessKey, string $stepId): string
+    {
+        return json_encode([$businessKey, $stepId], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    }
+
+    /** @return array{state:string,plan_hash:string,run_id:string}|null */
+    public function current(string $businessKey, string $stepId): ?array
+    {
+        $st = $this->db->pdo->prepare('SELECT state, plan_hash, run_id FROM step_states WHERE business_key = ? AND step_id = ?');
+        $st->execute([$businessKey, $stepId]);
+        $r = $st->fetch();
+
+        return $r ?: null;
+    }
+
     public function get(string $businessKey, string $stepId): ?string
     {
         $st = $this->db->pdo->prepare('SELECT state FROM step_states WHERE business_key = ? AND step_id = ?');
@@ -41,14 +57,24 @@ final class StepStateStore
         return array_map(static fn (array $r): string => (string) $r['step_id'], $st->fetchAll());
     }
 
-    /** 取り消せない操作の直前に書く。保存に失敗したら、例外（＝取り消せない操作は実行しない。10-1） */
-    public function markProcessing(string $businessKey, string $stepId, string $planHash, string $runId): void
+    /**
+     * 取り消せない操作の直前に書く。保存に失敗したら、例外（＝取り消せない操作は実行しない。10-1）。
+     * 「成功済みでない」「同じ業務キーに未解消がない」の確認は、この書き込みと同じトランザクションの中で行う
+     * （確認と書き込みの間に、別のプロセスが割り込めない）。
+     *
+     * @param (\Closure():void)|null $recheck 同じトランザクションの中で、最後にもう一度確かめる処理（停止の旗など）。失敗なら例外を投げる
+     */
+    public function markProcessing(string $businessKey, string $stepId, string $planHash, string $runId, ?\Closure $recheck = null): void
     {
-        $this->db->immediate(function () use ($businessKey, $stepId, $planHash, $runId): void {
+        $this->db->immediate(function () use ($businessKey, $stepId, $planHash, $runId, $recheck): void {
             $cur = $this->get($businessKey, $stepId);
             if ($cur !== null && $cur !== self::FAILED) {
                 throw new \LogicException("状態が {$cur} のため、処理中にできません");
             }
+            if (($un = $this->unresolvedFor($businessKey)) !== []) {
+                throw new \LogicException('この業務キーに、未解消の「処理中」「要確認」があります: '.implode(', ', $un));
+            }
+            $recheck !== null && $recheck();
             $this->write($businessKey, $stepId, self::PROCESSING, $planHash, $runId);
         });
     }
@@ -103,6 +129,6 @@ final class StepStateStore
         $st = $this->db->pdo->prepare('INSERT INTO step_states (business_key, step_id, state, plan_hash, run_id, updated_at) VALUES (?,?,?,?,?,?)
             ON CONFLICT(business_key, step_id) DO UPDATE SET state = excluded.state, plan_hash = excluded.plan_hash, run_id = excluded.run_id, updated_at = excluded.updated_at');
         $st->execute([$businessKey, $stepId, $state, $planHash, $runId, ($this->clock)()]);
-        $this->ledger->append('state', $businessKey."\n".$stepId, (object) ['state' => $state, 'plan_hash' => $planHash, 'run_id' => $runId, 'by' => $by]);
+        $this->ledger->append('state', self::subject($businessKey, $stepId), (object) ['state' => $state, 'plan_hash' => $planHash, 'run_id' => $runId, 'by' => $by]);
     }
 }

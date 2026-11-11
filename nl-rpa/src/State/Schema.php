@@ -33,10 +33,13 @@ final class Schema
             PRIMARY KEY (business_key, step_id)
         )");
 
+        $pdo->exec("CREATE TRIGGER IF NOT EXISTS step_states_no_delete BEFORE DELETE ON step_states BEGIN SELECT RAISE(ABORT, 'step_statesは削除できません'); END");
+
         // 停止の旗（キルスイッチ、通常停止）。変更は、ledgerにも記録する
         $pdo->exec('CREATE TABLE IF NOT EXISTS flags (
             name TEXT PRIMARY KEY,
             value INTEGER NOT NULL
         )');
+        $pdo->exec("CREATE TRIGGER IF NOT EXISTS flags_no_delete BEFORE DELETE ON flags BEGIN SELECT RAISE(ABORT, 'flagsは削除できません'); END");
     }
 }

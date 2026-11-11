@@ -19,8 +19,13 @@ final class Flags
         $st = $this->db->pdo->prepare('SELECT value FROM flags WHERE name = ?');
         $st->execute([$name]);
         $r = $st->fetch();
+        if ($r !== false && (int) $r['value'] === 1) {
+            return true;
+        }
+        // 表の値が書き換えられても、記録（ledger）の最新が「立っている」なら、立っているものとして扱う（安全側）
+        $last = $this->ledger->latest('flag', $name);
 
-        return $r !== false && (int) $r['value'] === 1;
+        return $last !== null && ($last->value ?? false) === true;
     }
 
     public function set(string $name, bool $on, string $by): void

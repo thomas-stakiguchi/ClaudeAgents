@@ -51,14 +51,15 @@ final class ReadbackComparator
         return preg_match('/\A[+-]?[0-9]{1,3}(?:[,，][0-9]{3})*(?:\.[0-9]+)?\z/u', $s) ? str_replace([',', '，'], '', $s) : $s;
     }
 
+    /** 同じ書式で読めること、書式に書き戻すと元の文字になること（余計な部分を捨てない）を求め、時刻まで含めて比べる */
     private static function date(string $s, string $format): ?string
     {
         $d = \DateTimeImmutable::createFromFormat('!'.$format, $s);
         $err = \DateTimeImmutable::getLastErrors();
-        if ($d === false || ($err !== false && ($err['warning_count'] > 0 || $err['error_count'] > 0))) {
+        if ($d === false || ($err !== false && ($err['warning_count'] > 0 || $err['error_count'] > 0)) || $d->format($format) !== $s) {
             return null;
         }
 
-        return $d->format('Y-m-d');
+        return $d->format('Y-m-d H:i:s.u');
     }
 }

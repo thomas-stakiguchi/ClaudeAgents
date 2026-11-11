@@ -180,6 +180,9 @@ class StateTest extends TestCase
             '切り詰めと違う' => ['ABCDEFG', 'ABCDX', ['max_length' => 5], false],
             '画面のほうが長い' => ['ABC', 'ABCDE', ['max_length' => 2], false],
             '値が違う' => ['100', '1000', ['thousand_separator' => true], false],
+            '時刻が違う日付' => ['2026-11-11 10:00', '2026-11-11 23:59', ['date_format' => 'Y-m-d H:i'], false],
+            '時刻が同じ日付' => ['2026-11-11 10:00', '2026-11-11 10:00', ['date_format' => 'Y-m-d H:i'], true],
+            'UNIX秒の違い' => ['0', '86399', ['date_format' => 'U'], false],
         ];
     }
 
@@ -188,5 +191,41 @@ class StateTest extends TestCase
     public function test_照合ルール(string $expected, string $actual, ?array $rule, bool $ok): void
     {
         $this->assertSame($ok, ReadbackComparator::equal($expected, $actual, $rule === null ? null : (object) $rule));
+    }
+
+    public function test_入れ子の内側が失敗して外側が握りつぶしても内側の書き込みは残らない(): void
+    {
+        $this->db->immediate(function (): void {
+            try {
+                $this->db->immediate(function (): void {
+                    $this->db->pdo->exec("INSERT INTO flags VALUES ('inner', 1)");
+                    throw new \RuntimeException('内側の失敗');
+                });
+            } catch (\RuntimeException) {
+                // 外側は、握りつぶして続ける
+            }
+            $this->db->pdo->exec("INSERT INTO flags VALUES ('outer', 1)");
+        });
+        $names = array_column($this->db->pdo->query('SELECT name FROM flags ORDER BY name')->fetchAll(), 'name');
+        $this->assertSame(['outer'], $names);
+    }
+
+    public function test_業務キーに改行があっても別の組と取り違えない(): void
+    {
+        $this->assertNotSame(StepStateStore::subject("A\nS-005", 'X'), StepStateStore::subject('A', "S-005\nX"));
+    }
+
+    public function test_状態の表の削除はできない(): void
+    {
+        $this->states->markProcessing('K1', 'S-005', 'h', 'r1');
+        $this->expectException(\PDOException::class);
+        $this->db->pdo->exec('DELETE FROM step_states');
+    }
+
+    public function test_同じ業務キーの別の手順は未解消の間は処理中にできない(): void
+    {
+        $this->states->markProcessing('K1', 'S-003', 'h', 'r1');
+        $this->expectException(\LogicException::class);
+        $this->states->markProcessing('K1', 'S-005', 'h', 'r1');
     }
 }

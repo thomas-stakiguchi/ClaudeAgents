@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Src\Guard;
 
+use Src\Plan\CanonicalJson;
 use Src\Plan\PlanHasher;
 use Src\Plan\PlanValidator;
+use Src\Plan\StrictJson;
 use Src\Policy\DestinationLimits;
 use Src\Policy\OperationPolicy;
 use Src\State\Flags;
@@ -14,25 +16,34 @@ use Src\State\StepStateStore;
 
 /**
  * 取り消せない操作を実行する、実行エンジンの中の「1か所」の関数（仕様12-1）。
- * 接続先ごとの部品は、この関数を通さずに取り消せない操作をできない（Permit を作れるのは、ここだけ）。
+ * 接続先ごとの部品（GuardedAction）は、この関数を通さずに取り消せない操作をできない。
  *
  * 実行前に必ず確認する。1つでも満たさなければ、実行せず停止し、理由を記録する（SEC-13）。
  * 最後に「処理中」を保存する。保存に失敗したら、実行しない。
+ * 計画は、最初に深いコピーを取り、そのコピーだけを検査と実行に使う（照合と実行の間の差し替えを防ぐ）。
+ * 呼び出し側の自己申告に頼らない：版・許可リスト・行の順番・件数・ドライランは、実行の登録（RunRegistrar）の記録から読む。
  */
 final class IrreversibleGuard
 {
-    /** @param list<string> $acceptedDryRunEnvironments 有効と認めるドライランの環境。1aは stub のみ（9-2。1bに入ったら、stubは無効） */
+    /** @var array<string,true> 発行した許可の合言葉（使い捨て） */
+    private array $issued = [];
+
     public function __construct(
         private readonly Ledger $ledger,
         private readonly StepStateStore $states,
         private readonly Flags $flags,
         private readonly OperationPolicy $policy,
-        private readonly array $acceptedDryRunEnvironments = ['stub'],
+        private readonly ApprovalChecker $approvals,
     ) {
     }
 
-    public function run(GuardRequest $r, IrreversibleAction $action): GuardOutcome
+    public function run(GuardRequest $r, GuardedAction $action): GuardOutcome
     {
+        if (! $action->belongsTo($this)) {
+            $this->logRefusal($r, ['この操作は、別のGuardに結び付いています']);
+
+            return GuardOutcome::refused(['この操作は、別のGuardに結び付いています']);
+        }
         $permit = null;
         $reasons = $this->check($r, $permit);
         if ($reasons !== [] || $permit === null) {
@@ -42,21 +53,41 @@ final class IrreversibleGuard
         }
 
         // ここから先は、「処理中」を書いたあと。異常は、すべて「要確認」にする（10-1）
+        $confirmed = false;
         try {
-            $confirmed = $action->perform($permit);
+            $confirmed = $action->perform($permit) === true;
         } catch (\Throwable) {
-            $this->states->markNeedsReview($r->businessKey, $r->stepId);
-
-            return GuardOutcome::executed(false);
+            $confirmed = false;
         }
-        if ($confirmed === true) {
-            $this->states->markSucceeded($r->businessKey, $r->stepId);
 
-            return GuardOutcome::executed(true);
+        try {
+            $confirmed
+                ? $this->states->markSucceeded($r->businessKey, $r->stepId)
+                : $this->states->markNeedsReview($r->businessKey, $r->stepId);
+        } catch (\Throwable $e) {
+            // 実行後に状態を保存できなかった。「処理中」のまま残る（次の起動時に「要確認」になる。二重実行にはならない）
+            $this->logRefusal($r, ['実行後の状態を保存できませんでした: '.$e->getMessage()]);
+
+            return GuardOutcome::executedButUnsaved();
         }
-        $this->states->markNeedsReview($r->businessKey, $r->stepId);
 
-        return GuardOutcome::executed(false);
+        return GuardOutcome::executed($confirmed);
+    }
+
+    /**
+     * 操作の側が、実行の直前に呼ぶ（GuardedAction::perform が呼ぶ）。
+     * 許可の合言葉（使い捨て）と、保存先の状態（「処理中」で、実行ID・計画ハッシュが一致）を照合し直す。
+     */
+    public function redeem(Permit $p): void
+    {
+        if (! isset($this->issued[$p->nonce])) {
+            throw new \LogicException('この許可は、Guardが発行したものではないか、使用済みです');
+        }
+        unset($this->issued[$p->nonce]);
+        $cur = $this->states->current($p->businessKey, $p->stepId);
+        if ($cur === null || $cur['state'] !== StepStateStore::PROCESSING || $cur['run_id'] !== $p->runId || $cur['plan_hash'] !== $p->planHash) {
+            throw new \LogicException('保存先の状態が、許可と一致しません');
+        }
     }
 
     /**
@@ -66,97 +97,134 @@ final class IrreversibleGuard
     {
         $reasons = [];
 
+        // 0. 計画の深いコピー（以降は、コピーだけを使う）
+        try {
+            $plan = StrictJson::decode(CanonicalJson::encode($r->plan));
+        } catch (\Throwable $e) {
+            return ['計画をコピーできません: '.$e->getMessage()];
+        }
+        if (! $plan instanceof \stdClass) {
+            return ['計画の形式が不正です'];
+        }
+
         // 1. 停止
         $this->flags->isSet(Flags::KILL_SWITCH) && $reasons[] = 'キルスイッチが発動しています';
         $this->flags->isSet(Flags::STOP) && $reasons[] = '停止の旗が立っています';
 
-        // 2. 計画の形式と、計画ハッシュ、承認
-        $formErrors = PlanValidator::validate($r->plan);
+        // 2. 計画の形式、計画ハッシュ、承認
+        $formErrors = PlanValidator::validate($plan);
         if ($formErrors !== []) {
             return [...$reasons, '計画の形式が不正です: '.$formErrors[0]];
         }
         try {
-            $hash = PlanHasher::hash($r->plan, $r->hashInputs);
+            $hash = PlanHasher::hash($plan, $r->hashInputs);
         } catch (\InvalidArgumentException $e) {
             return [...$reasons, '計画ハッシュを計算できません: '.$e->getMessage()];
         }
-        $approval = $this->ledger->latest('approval', $hash);
-        if ($approval === null || ($approval->stage ?? null) !== 'final') {
-            $reasons[] = 'この計画ハッシュの最終承認がありません（計画が承認後に変わった可能性）';
-        }
+        ! $this->approvals->hasFinalApproval($hash) && $reasons[] = 'この計画ハッシュの最終承認がありません（計画が承認後に変わった可能性）';
 
-        // 3. 有効なドライラン
-        $dry = null;
-        foreach ($this->ledger->all('dry_run', $hash) as $d) {
-            if (($d->dry_run_id ?? null) === $r->dryRunId) {
-                $dry = $d;
-            }
+        // 3. 実行の登録（ドライラン、接続先、各行のハッシュ）
+        $run = $this->ledger->latest('run', $r->runId);
+        if ($run === null) {
+            return [...$reasons, '実行が登録されていません'];
         }
-        if ($dry === null || ($dry->result ?? null) !== 'passed') {
-            $reasons[] = 'この計画ハッシュに結び付いた、合格したドライランがありません';
-        } elseif (! in_array($dry->environment ?? null, $this->acceptedDryRunEnvironments, true)) {
-            $reasons[] = 'ドライランの環境が、有効な範囲ではありません';
-        }
+        ($run->plan_hash ?? null) !== $hash && $reasons[] = '実行の登録時の計画ハッシュと違います（計画・許可リストが変わった可能性）';
+        $dry = $this->approvals->findPassedDryRun($hash, (string) ($run->dry_run_id ?? ''));
+        $dry['error'] !== null && $reasons[] = $dry['error'];
 
         // 4. 未確定
-        PlanValidator::hasUnresolved($r->plan) && $reasons[] = '「未確定」が残っています';
+        PlanValidator::hasUnresolved($plan) && $reasons[] = '「未確定」が残っています';
 
         // 5. 手順の特定。取り消せない手順だけが、この関数を通る
-        $step = self::findStep($r->plan->steps, $r->stepId);
+        $step = self::findStep($plan->steps, $r->stepId);
         if ($step === null) {
             return [...$reasons, "手順IDが計画にありません: {$r->stepId}"];
         }
-        if (! in_array($r->stepId, $this->policy->irreversibleStepIds($r->plan), true)) {
+        if (! in_array($r->stepId, $this->policy->irreversibleStepIds($plan), true)) {
             $reasons[] = '取り消せる手順は、この関数を通しません';
         }
-        if (! isset($step->verify)) {
-            $reasons[] = '確認条件が定義されていません';
-        }
+        ! isset($step->verify) && $reasons[] = '確認条件が定義されていません';
 
-        // 6. 接続先
+        // 6. 接続先（計画・ドライラン・実行の登録・実際の接続先が、すべて同じで、定数の範囲内）
         $destName = $step->destination->name ?? null;
         if (! is_string($destName) || ! DestinationLimits::isAllowed($destName)) {
             $reasons[] = '接続先が、ビルド時の定数の範囲にありません';
-        } elseif ($destName !== $r->actualDestinationName) {
-            $reasons[] = '実際の接続先が、計画の接続先と違います';
+        } elseif ($destName !== $r->actualDestinationName || $destName !== ($run->destination_name ?? null)) {
+            $reasons[] = '実際の接続先が、計画・実行の登録の接続先と違います';
         }
-        if (isset($dry->destination_name) && $dry->destination_name !== $destName) {
-            $reasons[] = 'ドライランの接続先が、計画の接続先と違います';
-        }
+        $dry['destination'] !== null && $dry['destination'] !== $destName && $reasons[] = 'ドライランの接続先が、計画の接続先と違います';
 
-        // 7. 読み返し照合（関数の中で、生の値と入力データの値を比べる。9-3）
+        // 7. 行（登録した入力データと照合）
+        $index = $this->rowIndex($run, $r, $plan, $reasons);
+
+        // 8. 読み返し照合（関数の中で、生の値と入力データの値を比べる。9-3）
         $this->checkReadback($step, $r, $reasons);
 
-        // 8. 業務キー（二重実行の防止。9-4、10-3）
-        if ($r->businessKey === '' || ! $this->isBusinessKeyOfRow($r)) {
-            $reasons[] = '業務キーが、この行の業務キー列の値と一致しません';
-        }
-        if ($this->states->get($r->businessKey, $r->stepId) === StepStateStore::SUCCEEDED) {
-            $reasons[] = 'この業務キー・手順は、すでに成功しています';
-        }
-        if (($un = $this->states->unresolvedFor($r->businessKey)) !== []) {
-            $reasons[] = 'この業務キーに、未解消の「処理中」「要確認」があります: '.implode(', ', $un);
-        }
+        // 9. 二重実行の防止（9-4、10-3）と、状態の表の突き合わせ
+        $this->checkStates($r, $reasons);
 
-        // 9. 上限と、初回1件
-        $this->checkLimits($r, $reasons);
-        if ($r->rowIndexInRun >= 1 && $this->ledger->latest('first_row_confirmed', $r->runId) === null) {
-            $reasons[] = '初回の1件の確認が済んでいません';
+        // 10. 上限（件数は、登録時に検査済み。ここでは計画との食い違いだけ見る）と、初回1件
+        $l = $plan->limits;
+        $total = is_array($run->rows ?? null) ? count($run->rows) : 0;
+        (! isset($l->max_rows_per_run) || $total > $l->max_rows_per_run) && $reasons[] = '件数の上限を超えます（または、上限が計画にありません）';
+        if ($index !== null && $index >= 1) {
+            $first = $run->rows[0]->business_key ?? null;
+            if ($this->ledger->latest('first_row_confirmed', $r->runId) === null) {
+                $reasons[] = '初回の1件の確認が済んでいません';
+            } elseif (! is_string($first) || $this->states->get($first, $r->stepId) !== StepStateStore::SUCCEEDED) {
+                $reasons[] = '初回の1件が、成功していません';
+            }
         }
 
         if ($reasons !== []) {
             return $reasons;
         }
 
-        // 10. 最後に、「処理中」の保存。失敗したら、実行しない
+        // 11. 最後に、「処理中」の保存（確認と同じトランザクションで、状態と停止の旗を確かめ直す）。失敗したら、実行しない
         try {
-            $this->states->markProcessing($r->businessKey, $r->stepId, $hash, $r->runId);
+            $this->states->markProcessing($r->businessKey, $r->stepId, $hash, $r->runId, function (): void {
+                if ($this->flags->isSet(Flags::KILL_SWITCH) || $this->flags->isSet(Flags::STOP)) {
+                    throw new \LogicException('停止の旗が立ちました');
+                }
+            });
         } catch (\Throwable $e) {
             return ['「処理中」を保存できませんでした: '.$e->getMessage()];
         }
-        $permit = Permit::mint($this, $hash, $r->stepId, $r->businessKey, $r->runId);
+        $nonce = bin2hex(random_bytes(16));
+        $this->issued[$nonce] = true;
+        $permit = Permit::mint($this, $hash, $r->stepId, $r->businessKey, $r->runId, $nonce, CanonicalJson::encode($step));
 
         return [];
+    }
+
+    /**
+     * @param list<string> $reasons
+     */
+    private function rowIndex(\stdClass $run, GuardRequest $r, \stdClass $plan, array &$reasons): ?int
+    {
+        $rows = $run->rows ?? null;
+        if (! is_array($rows)) {
+            $reasons[] = '実行の登録に、行の記録がありません';
+
+            return null;
+        }
+        foreach ($rows as $i => $row) {
+            if (($row->business_key ?? null) === $r->businessKey) {
+                if (($row->values_hash ?? null) !== RunRegistrar::rowHash($r->rowValues)) {
+                    $reasons[] = '行の値が、登録した入力データと違います';
+                }
+                $keyCol = null;
+                foreach ($plan->input->columns as $c) {
+                    ($c->role ?? null) === 'business_key' && $keyCol = $c->name;
+                }
+                ($keyCol === null || ($r->rowValues[$keyCol] ?? null) !== $r->businessKey) && $reasons[] = '業務キーが、この行の業務キー列の値と一致しません';
+
+                return $i;
+            }
+        }
+        $reasons[] = 'この業務キーは、登録した入力データにありません';
+
+        return null;
     }
 
     /** @param list<string> $reasons */
@@ -189,31 +257,20 @@ final class IrreversibleGuard
         }
     }
 
-    private function isBusinessKeyOfRow(GuardRequest $r): bool
-    {
-        foreach ($r->plan->input->columns as $c) {
-            if (($c->role ?? null) === 'business_key') {
-                return ($r->rowValues[$c->name] ?? null) === $r->businessKey;
-            }
-        }
-
-        return false;
-    }
-
     /** @param list<string> $reasons */
-    private function checkLimits(GuardRequest $r, array &$reasons): void
+    private function checkStates(GuardRequest $r, array &$reasons): void
     {
-        $l = $r->plan->limits;
-        if (! isset($l->max_rows_per_run)) {
-            $reasons[] = '件数の上限が、計画にありません（R9）';
-        } elseif ($r->rowIndexInRun + 1 > $l->max_rows_per_run) {
-            $reasons[] = '件数の上限を超えます';
+        $cur = $this->states->current($r->businessKey, $r->stepId);
+        // 状態の表が、記録（ledger）の最新と食い違っていれば、拒否（表の書き換えの検知。LOC-8：完全ではない）
+        $last = $this->ledger->latest('state', StepStateStore::subject($r->businessKey, $r->stepId));
+        if (($cur['state'] ?? null) !== ($last->state ?? null)) {
+            $reasons[] = '状態の表が、記録と食い違っています（書き換えの疑い）';
         }
-        if (isset($l->max_quantity_per_run) && $r->quantityTotalInRun > $l->max_quantity_per_run) {
-            $reasons[] = '数量の上限を超えます';
+        if (($cur['state'] ?? null) === StepStateStore::SUCCEEDED) {
+            $reasons[] = 'この業務キー・手順は、すでに成功しています';
         }
-        if (isset($l->max_amount_per_run) && $r->amountTotalInRun > $l->max_amount_per_run) {
-            $reasons[] = '金額の上限を超えます';
+        if (($un = $this->states->unresolvedFor($r->businessKey)) !== []) {
+            $reasons[] = 'この業務キーに、未解消の「処理中」「要確認」があります: '.implode(', ', $un);
         }
     }
 
@@ -238,7 +295,7 @@ final class IrreversibleGuard
     private function logRefusal(GuardRequest $r, array $reasons): void
     {
         try {
-            $this->ledger->append('refusal', $r->businessKey."\n".$r->stepId, (object) ['run_id' => $r->runId, 'reasons' => $reasons]);
+            $this->ledger->append('refusal', StepStateStore::subject($r->businessKey, $r->stepId), (object) ['run_id' => $r->runId, 'reasons' => $reasons]);
         } catch (\Throwable) {
             // 記録に失敗しても、実行しないことは変わらない
         }
