@@ -18,6 +18,9 @@ interface BrowserPort
 {
     public function destinationName(): string;
 
+    /** 実行環境の名前（ドライランの記録に使う。1aの偽の部品は stub）。1bで部品を差し替えたら、別の名前になる */
+    public function environmentName(): string;
+
     /** 登録された画面（名前）を開く */
     public function openUrl(string $page): void;
 
@@ -42,9 +45,11 @@ interface BrowserPort
     /**
      * 取り消せない操作（click、取り消せない扱いの type_text など）。
      *
+     * 照合に使う Guard は、部品が自分で持つ（コンストラクタで結び付ける）。引数で受け取った Guard は信用しない。
+     *
      * @param array<string,string> $rowValues この行の入力データ（type_text の値の解決に使う）
      */
-    public function performIrreversible(Redeemed $proof, IrreversibleGuard $guard, array $rowValues): void;
+    public function performIrreversible(Redeemed $proof, array $rowValues): void;
 
     public function close(): void;
 }

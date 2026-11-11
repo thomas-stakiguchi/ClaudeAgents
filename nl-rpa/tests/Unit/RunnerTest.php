@@ -49,7 +49,7 @@ class RunnerTest extends TestCase
         $this->approvals = new ApprovalChecker($this->ledger);
         $this->guard = new IrreversibleGuard($this->ledger, $this->states, $this->flags, $this->approvals);
         $this->registrar = new RunRegistrar($this->ledger, $this->approvals);
-        $this->browser = new FakeBrowser(dirname(__DIR__, 2).'/stubs/order_system.json');
+        $this->browser = new FakeBrowser(dirname(__DIR__, 2).'/stubs/order_system.json', $this->guard);
         $this->lockPath = sys_get_temp_dir().'/nlrpa_lock_'.bin2hex(random_bytes(4));
         $this->runner = new PlanRunner($this->ledger, $this->states, $this->flags, $this->guard, $this->approvals, $this->browser, new RunLock($this->lockPath));
         $this->plan = StrictJson::decode(file_get_contents(dirname(__DIR__, 2).'/stubs/order_plan.json'));
@@ -284,7 +284,7 @@ class RunnerTest extends TestCase
         $this->browser->openUrl('order_page');
         $this->expectException(\Throwable::class);
         try {
-            $this->browser->performIrreversible(Redeemed::mint($this->guard, $permit, 'guess'), $this->guard, []);
+            $this->browser->performIrreversible(Redeemed::mint($this->guard, $permit, 'guess'), []);
         } finally {
             $this->assertSame([], $this->browser->orders());
         }
@@ -300,5 +300,142 @@ class RunnerTest extends TestCase
             }
         }
         $this->assertSame('login_page', $this->browser->currentPage(), '各行の終わりに、画面は初期状態へ戻る');
+    }
+
+    // ---- Opusレビュー（Runner）の再現入力 ----
+
+    public function test_手順の接続先が実際の接続先と違えば開始しない(): void
+    {
+        $this->plan->steps[1]->steps[1]->destination->name = 'other';
+        $this->inputs['registrations']->autosave_free_inputs[0]->destination = 'other'; // 登録も、同じ接続先名に差し替える
+        $this->approve('plan');
+        $r = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::REFUSED_TO_START, $r->status);
+        $this->assertSame('login_page', $this->browser->currentPage());
+        $this->assertSame('', $this->browser->readValueOrEmpty('item_code'));
+    }
+
+    public function test_別のGuardの証明ではブラウザ部品は操作しない(): void
+    {
+        // 別のDBで、正しい流れを通した Guard の証明を、このブラウザに渡す
+        $otherDb = Db::open(':memory:');
+        $clock = fn (): string => sprintf('2026-11-11T00:01:%02dZ', $this->t++ % 60);
+        $otherLedger = new Ledger($otherDb, $clock);
+        $otherStates = new StepStateStore($otherDb, $otherLedger, $clock);
+        $otherApprovals = new ApprovalChecker($otherLedger);
+        $otherGuard = new IrreversibleGuard($otherLedger, $otherStates, new Flags($otherDb, $otherLedger), $otherApprovals);
+        $captured = null;
+        $evil = new class($otherGuard, $captured) extends \Src\Guard\GuardedAction {
+            public function __construct(IrreversibleGuard $g, public mixed &$cap)
+            {
+                parent::__construct($g);
+            }
+
+            protected function execute(Redeemed $proof): bool
+            {
+                $this->cap = $proof;
+
+                return true;
+            }
+        };
+        $hash = PlanHasher::hash($this->plan, $this->inputs);
+        $otherLedger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => 'x', 'os_user' => 'y']);
+        $otherLedger->append('dry_run', $hash, (object) ['dry_run_id' => 'DR-1', 'result' => 'passed', 'environment' => 'stub', 'destination_name' => 'stub']);
+        $this->assertSame([], (new RunRegistrar($otherLedger, $otherApprovals))->register('RUN-1', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        $o = $otherGuard->run(new \Src\Guard\GuardRequest($this->plan, $this->inputs, 'S-005', 'K-001', 'RUN-1', 'stub', $this->rows[0], ['item_code' => 'ABC', 'quantity' => '1200']), $evil);
+        $this->assertSame([], $o->reasons);
+        $this->assertInstanceOf(Redeemed::class, $captured);
+        // 本物のGuardが発行した証明だが、このブラウザ（別のGuardに結び付く）は、受け付けない
+        $this->browser->openUrl('order_page');
+        try {
+            $this->browser->performIrreversible($captured, $this->rows[0]);
+            $this->fail('別のGuardの証明で操作できた');
+        } catch (\Throwable) {
+            $this->assertSame([], $this->browser->orders());
+        }
+    }
+
+    public function test_OKする確認ダイアログを含む計画は1aでは開始しない(): void
+    {
+        $this->plan->steps[1]->steps[] = StrictJson::decode('{"id":"S-010","action":"on_dialog","source":null,"dialog_text":"登録しますか","response":"ok"}');
+        $this->approve('plan');
+        $this->assertSame(RunReport::REFUSED_TO_START, $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1')->status);
+    }
+
+    public function test_最終承認がなければ本番は開始しない_入力も実行されない(): void
+    {
+        $this->approve('plan');
+        $this->assertSame(RunReport::COMPLETED, $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1')->status);
+        // 最終承認なしで、実行の記録（run）を偽って追記する
+        $hash = PlanHasher::hash($this->plan, $this->inputs);
+        $this->ledger->append('run', 'RUN-X', (object) ['plan_hash' => $hash, 'dry_run_id' => 'DR-1', 'destination_name' => 'stub', 'rows' => array_map(fn ($r) => (object) ['business_key' => $r['伝票番号'], 'values_hash' => RunRegistrar::rowHash($r)], $this->rows)]);
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-X', $this->rows);
+        $this->assertSame(RunReport::REFUSED_TO_START, $r->status);
+        $this->assertSame('login_page', $this->browser->currentPage(), '何も入力されていない');
+    }
+
+    public function test_ドライランの記録の環境はブラウザ部品から取る(): void
+    {
+        $this->approve('plan');
+        $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $d = $this->ledger->latest('dry_run', PlanHasher::hash($this->plan, $this->inputs));
+        $this->assertSame($this->browser->environmentName(), $d->environment);
+    }
+
+    public function test_for_each_rowの外の取り消せない手順は1aでは開始しない(): void
+    {
+        $click = StrictJson::decode('{"id":"S-010","action":"click","destination":{"kind":"browser","name":"stub"},"target":"submit_button","source":null,"verify":{"type":"text_visible","value":"発注番号"},"readback":[{"target":"item_code","value":"x"}]}');
+        array_unshift($this->plan->steps, $click);
+        $this->approve('plan');
+        $this->assertSame(RunReport::REFUSED_TO_START, $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1')->status);
+    }
+
+    public function test_読み返しのない取り消せない手順はドライランで不合格(): void
+    {
+        unset($this->plan->steps[1]->steps[3]->readback);
+        $this->approve('plan');
+        $r = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertNotEmpty(array_filter($r->reasons, fn ($x) => str_contains($x, '読み返し照合の項目')));
+    }
+
+    public function test_画面を初期状態に戻せなければ停止する(): void
+    {
+        $this->approve('plan');
+        $this->browser->failReset = true;
+        $r = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $d = $this->ledger->latest('dry_run', PlanHasher::hash($this->plan, $this->inputs));
+        $this->assertSame('failed', $d->result);
+    }
+
+    public function test_登録より少ない行を渡すと開始しない(): void
+    {
+        $this->prepareRun();
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', array_slice($this->rows, 0, 2));
+        $this->assertSame(RunReport::REFUSED_TO_START, $r->status);
+        $this->assertSame([], $this->browser->orders());
+    }
+
+    public function test_行の値が登録と違えば取り消せる手順も実行しない(): void
+    {
+        $this->prepareRun();
+        $rows = $this->rows;
+        $rows[0]['商品コード'] = 'EVIL';
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $rows);
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertSame('login_page', $this->browser->currentPage(), 'EVIL が入力される前に止まる');
+        $this->assertSame([], $this->browser->orders());
+    }
+
+    public function test_異常終了のあとの起動で処理中は要確認になり_その行は実行されない(): void
+    {
+        $this->prepareRun();
+        // 前回、K-001 の取り消せない操作の直前に「処理中」を書いたまま、プロセスが死んだ状態を作る
+        $this->states->markProcessing('K-001', 'S-005', PlanHasher::hash($this->plan, $this->inputs), 'RUN-0');
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertSame([], $this->browser->orders());
     }
 }

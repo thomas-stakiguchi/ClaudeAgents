@@ -30,7 +30,10 @@ final class FakeBrowser implements BrowserPort
     /** @var \stdClass */
     private \stdClass $def;
 
-    public function __construct(string $stubFile, private readonly string $destination = 'stub')
+    /** 試験用：画面を初期状態へ戻すのに失敗する */
+    public bool $failReset = false;
+
+    public function __construct(string $stubFile, private readonly IrreversibleGuard $guard, private readonly string $destination = 'stub')
     {
         $json = file_get_contents($stubFile);
         if ($json === false) {
@@ -47,6 +50,11 @@ final class FakeBrowser implements BrowserPort
     public function destinationName(): string
     {
         return $this->destination;
+    }
+
+    public function environmentName(): string
+    {
+        return 'stub';
     }
 
     /** @return list<string> 登録された発注番号（副作用の記録） */
@@ -92,6 +100,12 @@ final class FakeBrowser implements BrowserPort
         $e = $this->element($element);
 
         return $this->values[$element] ?? (string) ($e->value ?? '');
+    }
+
+    /** 試験用：要素がなくても、例外にせず、入力済みの値（なければ空）を返す */
+    public function readValueOrEmpty(string $element): string
+    {
+        return $this->values[$element] ?? '';
     }
 
     public function typeText(string $element, string $value): void
@@ -141,13 +155,14 @@ final class FakeBrowser implements BrowserPort
 
     public function resetToStart(): void
     {
+        $this->failReset && throw new \RuntimeException('画面を初期状態に戻せません');
         $this->page = (string) $this->def->start;
         $this->values = [];
     }
 
-    public function performIrreversible(Redeemed $proof, IrreversibleGuard $guard, array $rowValues): void
+    public function performIrreversible(Redeemed $proof, array $rowValues): void
     {
-        $guard->assertRedeemed($proof); // 操作の瞬間に、証明を照合し直す（使い捨て）
+        $this->guard->assertRedeemed($proof); // 操作の瞬間に、証明を照合し直す（使い捨て）
         $step = $proof->permit->step(); // 検査した時点の手順。呼び出し側は、対象を指定できない
         $target = (string) ($step->target ?? '');
         switch ($step->action ?? null) {

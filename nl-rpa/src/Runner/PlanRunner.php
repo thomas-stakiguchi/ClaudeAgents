@@ -9,6 +9,7 @@ use Src\Guard\ApprovalChecker;
 use Src\Guard\GuardRequest;
 use Src\Guard\IrreversibleGuard;
 use Src\Guard\ReadbackComparator;
+use Src\Guard\RunRegistrar;
 use Src\Plan\CanonicalJson;
 use Src\Plan\PlanHasher;
 use Src\Plan\PlanValidator;
@@ -70,7 +71,7 @@ final class PlanRunner
             $this->ledger->append('dry_run', $ctx->hash, (object) [
                 'dry_run_id' => $dryRunId,
                 'result' => $report->status === RunReport::COMPLETED ? 'passed' : 'failed',
-                'environment' => 'stub',
+                'environment' => $this->browser->environmentName(),
                 'destination_name' => $this->browser->destinationName(),
                 'reasons' => $report->reasons,
             ]);
@@ -104,8 +105,24 @@ final class PlanRunner
             if (($run->plan_hash ?? null) !== $ctx->hash) {
                 return $this->refuse('実行の登録時の計画ハッシュと違います（計画・許可リストが変わった可能性）');
             }
+            // 本番の条件（9-2）を、開始時に確かめる（取り消せる手順が実行されてから、Guardに止められるのを防ぐ）
+            if (! $this->approvals->hasFinalApproval($ctx->hash)) {
+                return $this->refuse('この計画ハッシュの最終承認がありません');
+            }
+            $dry = $this->approvals->findPassedDryRun($ctx->hash, (string) ($run->dry_run_id ?? ''));
+            if ($dry['error'] !== null) {
+                return $this->refuse($dry['error']);
+            }
+            if (($run->destination_name ?? null) !== $this->browser->destinationName() || $dry['destination'] !== $this->browser->destinationName()) {
+                return $this->refuse('実行の登録・ドライランの接続先が、実際の接続先と違います');
+            }
             $ctx->runId = $runId;
             $ctx->registered = is_array($run->rows ?? null) ? $run->rows : [];
+            if (count($rows) !== count($ctx->registered)) {
+                return $this->refuse('入力データの件数が、登録した件数と違います');
+            }
+            // ロックを取ったあとに、異常終了で残った「処理中」を「要確認」にする（14-3の5）
+            $this->states->recoverAfterCrash();
 
             return $this->execute($ctx, $rows, $run);
         } finally {
@@ -141,6 +158,27 @@ final class PlanRunner
         }
         if (! DestinationLimits::isAllowed($this->browser->destinationName())) {
             return '接続先が、ビルド時の定数の範囲にありません';
+        }
+        // すべての手順の接続先が、実際の接続先と一致すること（登録は接続先ごと。7-1-1）
+        $dest = $this->browser->destinationName();
+        $bad = $this->firstStepWhere($copy->steps, static fn (\stdClass $s): bool => isset($s->destination) && $s->destination->name !== $dest);
+        if ($bad !== null) {
+            return "手順 {$bad} の接続先が、実際の接続先（{$dest}）と違います";
+        }
+        // 1aの制約：OKする確認ダイアログの自動対応は未対応。for_each_row の外の取り消せない手順も、未対応
+        $okDialog = $this->firstStepWhere($copy->steps, static fn (\stdClass $s): bool => ($s->action ?? null) === 'on_dialog' && ($s->response ?? null) !== 'stop');
+        if ($okDialog !== null) {
+            return "1aでは、OKする確認ダイアログ（on_dialog）は未対応です: {$okDialog}";
+        }
+        $outside = [];
+        foreach ($copy->steps as $top) {
+            if (($top->action ?? null) !== 'for_each_row') {
+                array_push($outside, ...$this->stepIds([$top]));
+            }
+        }
+        $outsideIrr = array_values(array_intersect($outside, $policy->irreversibleStepIds($copy)));
+        if ($outsideIrr !== []) {
+            return '1aでは、for_each_row の外の取り消せない手順は未対応です: '.$outsideIrr[0];
         }
         $ctx = new \stdClass();
         $ctx->mode = $mode;
@@ -181,6 +219,10 @@ final class PlanRunner
                     if ($regKey !== $key) {
                         return $report->halt('入力データの並びが、登録した実行と違います');
                     }
+                    // 取り消せる手順が使う値も、実行の前に、登録時のハッシュと照合する
+                    if (($ctx->registered[$i]->values_hash ?? null) !== RunRegistrar::rowHash($values)) {
+                        return $report->halt("行の値が、登録した入力データと違います: {$key}");
+                    }
                     if ($this->allSucceeded($ctx, $key, $top)) {
                         $report->rows[] = ['business_key' => $key, 'status' => 'skipped', 'reads' => []];
                         continue;
@@ -208,7 +250,14 @@ final class PlanRunner
                         break;
                     }
                 }
-                $this->safeReset(); // 各行の終わりに、開始画面へ戻る（7-1）
+                try {
+                    $this->browser->resetToStart(); // 各行の終わりに、開始画面へ戻る（7-1）。戻せなければ停止
+                } catch (\Throwable $e) {
+                    $rowReport['status'] = 'halted';
+                    $report->rows[] = $rowReport;
+
+                    return $report->halt('画面を初期状態に戻せません: '.$e->getMessage());
+                }
                 $report->rows[] = $rowReport;
                 if ($ctx->mode === 'real' && $i === 0 && $this->ledger->latest('first_row_confirmed', $ctx->runId) === null && count($rows) > 1) {
                     $report->status = RunReport::AWAITING_FIRST_ROW;
@@ -220,6 +269,25 @@ final class PlanRunner
         }
 
         return $report;
+    }
+
+    /** @param array<mixed> $steps @return string|null 条件に合う最初の手順ID */
+    private function firstStepWhere(array $steps, \Closure $pred): ?string
+    {
+        foreach ($steps as $s) {
+            if ($s instanceof \stdClass) {
+                if ($pred($s)) {
+                    return (string) ($s->id ?? '?');
+                }
+                foreach (['steps', 'then', 'else'] as $k) {
+                    if (isset($s->{$k}) && is_array($s->{$k}) && ($f = $this->firstStepWhere($s->{$k}, $pred)) !== null) {
+                        return $f;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private function safeReset(): void
@@ -350,6 +418,9 @@ final class PlanRunner
             $raw[$item->target] = $this->browser->readValue($item->target);
         }
         if ($ctx->mode === 'dry') {
+            if (($s->readback ?? []) === []) {
+                return "取り消せない手順に、読み返し照合の項目がありません: {$s->id}"; // 本番で、Guardが必ず拒否する
+            }
             // ドライラン：取り消せない操作は実行しない。手前で、読み返し照合だけ確かめて、この行を終える
             foreach ($s->readback ?? [] as $item) {
                 $expected = isset($item->column) ? ($values[$item->column] ?? '') : (string) $item->value;

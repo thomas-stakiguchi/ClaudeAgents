@@ -17,18 +17,18 @@ final class BrowserIrreversibleAction extends GuardedAction
 {
     /** @param array<string,string> $rowValues */
     public function __construct(
-        private readonly IrreversibleGuard $irreversibleGuard,
+        IrreversibleGuard $guard,
         private readonly BrowserPort $browser,
         private readonly Verifier $verifier,
         private readonly array $rowValues,
     ) {
-        parent::__construct($irreversibleGuard);
+        parent::__construct($guard);
     }
 
     protected function execute(Redeemed $proof): bool
     {
         $step = $proof->permit->step();
-        $this->browser->performIrreversible($proof, $this->irreversibleGuard, $this->rowValues);
+        $this->browser->performIrreversible($proof, $this->rowValues);
 
         return isset($step->verify) && $this->verifier->check($step->verify, $step, $this->rowValues);
     }
