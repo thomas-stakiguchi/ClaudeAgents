@@ -24,8 +24,20 @@ final class ApprovalChecker
 
     public function hasFinalApproval(string $planHash): bool
     {
+        return $this->hasApproval($planHash, ['final']);
+    }
+
+    /** ドライランに進むための承認（計画の承認）。最終承認でも、可 */
+    public function hasPlanApproval(string $planHash): bool
+    {
+        return $this->hasApproval($planHash, ['plan', 'final']);
+    }
+
+    /** @param list<string> $stages */
+    private function hasApproval(string $planHash, array $stages): bool
+    {
         foreach ($this->ledger->all('approval', $planHash) as $a) {
-            if (($a->stage ?? null) === 'final' && self::nonEmpty($a->approver ?? null) && self::nonEmpty($a->os_user ?? null)) {
+            if (in_array($a->stage ?? null, $stages, true) && self::nonEmpty($a->approver ?? null) && self::nonEmpty($a->os_user ?? null)) {
                 return true;
             }
         }

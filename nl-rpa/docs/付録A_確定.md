@@ -52,7 +52,6 @@
 - 呼び出し側が渡せば、次も照合する：シナリオ（根拠の文）、人が定義した列、画面の記録の要素名、組織の件数の最大値
 
 ## 未確定（次に決める）
-- `verify.value` の意味（列名か固定値か）。今のスタブは列名を書いている
 - press_key の「押すキー」の欄
 - `created_by_ai`、`allowlist_versions`、`screen_record_version`、`plan_id` などの自己申告は、計画を作る処理（app側）が実行エンジンの値で上書きする。ゲートはまだ上書きしない
 - `unresolved`（未確定）をAIが書かずに隠すことは、決定的な検査では防げない。承認画面で補う（方法は未定）
@@ -97,3 +96,22 @@
 
 ## 実行PCで必要なPHP拡張（実装で判明）
 - `intl`（業務キーのNFKC正規化）、`mbstring`、`pdo_sqlite`。TECH_STACK.md の更新対象
+
+## 確認条件（verify）の意味（Runnerで確定）
+- `text_visible`：画面に、`value` の文字がある
+- `text_equals`：`target` の値が、`value`（固定値）と等しい
+- `element_exists`：`value` という名前の要素が、画面にある
+- `url_matches`：開いている画面の名前が、`value` と等しい
+- `value_matches`：`target` の値が、入力データの列（`value` は**列名**）の値と、`rule` のもとで一致する
+- 知らない種類は、不合格
+
+## Runner（`PlanRunner`）で決めたこと
+- ドライラン：計画の承認（stage=plan または final）が必要。取り消せない操作の手前で、読み返し照合だけ確かめて、その行を終え、各行の終わりに画面を初期状態へ戻す。結果は ledger の `dry_run`（environment=stub、接続先、合否）に記録する。状態（step_states）は変えない
+- 本番：実行の登録（`RunRegistrar`）が済んでいること。計画ハッシュ・入力データの並び（登録した順番）を確かめる。取り消せない手順は、Guard（12-1）だけが通す
+- 初回は1件だけ実行して止まる（`awaiting_first_row_confirmation`）。人が `confirmFirstRow` で確認を記録してから、残りを実行する。確認は、1件目の「成功」より後に記録されたものだけが有効（人が「要確認」を判定した場合は、判定のあとに、あらためて確認する）
+- すでに成功した行は、飛ばす（別の実行ID・別の版でも）
+- 二重起動は、ファイルロック（`RunLock`）で防ぐ。取れなければ、開始しない
+- 各手順の前に、キルスイッチ・停止の旗を読む。想定外の確認ダイアログが開いていたら停止する
+- 取り消せない操作の瞬間は、`BrowserPort::performIrreversible` が、証明（Redeemed）を Guard で照合し直してから行う。対象の要素は、検査した時点の手順から取る（呼び出し側は指定できない）
+- 1aの未対応：`on_dialog` の自動対応（出たら停止）、`login`、`press_key`、`confirm_dialog`、`wait_for` の待ち（1回判定するだけ）、`write_result`（判定のみ）
+- 取り消し可否の登録（`hashInputs['registrations']`）の例：スタブ画面では、入力欄 `item_code`・`quantity` を「自動保存なし」、`login_page`・`order_page` をURLとして登録し、`submit_button` は登録しない（＝取り消せない）

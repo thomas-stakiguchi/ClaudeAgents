@@ -1,0 +1,50 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Src\Browser;
+
+use Src\Guard\IrreversibleGuard;
+use Src\Guard\Redeemed;
+
+/**
+ * ブラウザ操作のインターフェース（仕様14-3）。1aは、Chromeを使わない偽の部品（FakeBrowser）、1bは chrome-php 用。
+ *
+ * 取り消せる操作（読み取りなど）は、普通のメソッド。
+ * 取り消せない操作は、performIrreversible だけ。許可の証明（Redeemed）を必ず受け取り、操作の瞬間に Guard で照合し直す。
+ * 対象の要素は、呼び出し側が渡さない。検査した時点の手順（証明の中のコピー）から取る。
+ */
+interface BrowserPort
+{
+    public function destinationName(): string;
+
+    /** 登録された画面（名前）を開く */
+    public function openUrl(string $page): void;
+
+    public function currentPage(): string;
+
+    public function readValue(string $element): string;
+
+    public function typeText(string $element, string $value): void;
+
+    public function clearText(string $element): void;
+
+    public function textVisible(string $text): bool;
+
+    public function elementExists(string $element): bool;
+
+    /** 開いている確認ダイアログの文言（なければ null）。想定外のダイアログは、呼び出し側が停止する */
+    public function pendingDialog(): ?string;
+
+    /** 入力をクリアし、開始画面へ戻る（7-1） */
+    public function resetToStart(): void;
+
+    /**
+     * 取り消せない操作（click、取り消せない扱いの type_text など）。
+     *
+     * @param array<string,string> $rowValues この行の入力データ（type_text の値の解決に使う）
+     */
+    public function performIrreversible(Redeemed $proof, IrreversibleGuard $guard, array $rowValues): void;
+
+    public function close(): void;
+}

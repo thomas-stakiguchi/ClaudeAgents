@@ -1,0 +1,18 @@
+{
+  "start": "login_page",
+  "pages": {
+    "login_page": { "text": ["ログイン"], "elements": {} },
+    "order_page": {
+      "text": ["発注入力"],
+      "elements": {
+        "item_code": { "kind": "input" },
+        "quantity": { "kind": "input" },
+        "submit_button": { "kind": "button", "goto": "done_page", "creates_order": true }
+      }
+    },
+    "done_page": {
+      "text": ["発注番号"],
+      "elements": { "order_number": { "kind": "text", "value": "" } }
+    }
+  }
+}
