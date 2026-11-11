@@ -35,21 +35,25 @@ final class StubAiClient implements AiClient
   },
   "limits": { "max_rows_per_run": 100, "max_quantity_per_run": 5000 },
   "steps": [
-    { "id": "S-001", "action": "open_url", "target": "login_page",
+    { "id": "S-001", "action": "open_url", "destination": { "kind": "browser", "name": "stub" }, "target": "login_page",
       "verify": { "type": "text_visible", "value": "ログイン" },
       "source": "発注管理システムにログインする。", "label": "ログイン画面を開く" },
     { "id": "S-002", "action": "for_each_row", "source": "入力データの各行について",
       "steps": [
-        { "id": "S-003", "action": "type_text", "target": "item_code", "column": "商品コード",
+        { "id": "S-003", "action": "type_text", "destination": { "kind": "browser", "name": "stub" }, "target": "item_code", "column": "商品コード",
           "verify": { "type": "value_matches", "value": "商品コード", "rule": { "trim": true } },
           "source": "商品コード・数量・納品日を入力する。" },
-        { "id": "S-004", "action": "type_text", "target": "quantity", "column": "数量",
+        { "id": "S-004", "action": "type_text", "destination": { "kind": "browser", "name": "stub" }, "target": "quantity", "column": "数量",
           "verify": { "type": "value_matches", "value": "数量", "rule": { "trim": true, "thousand_separator": true } },
           "source": "商品コード・数量・納品日を入力する。" },
-        { "id": "S-005", "action": "click", "target": "submit_button",
+        { "id": "S-005", "action": "click", "destination": { "kind": "browser", "name": "stub" }, "target": "submit_button",
           "verify": { "type": "text_visible", "value": "発注番号" },
+          "readback": [
+            { "target": "item_code", "column": "商品コード", "rule": { "trim": true } },
+            { "target": "quantity", "column": "数量", "rule": { "trim": true, "thousand_separator": true } }
+          ],
           "source": "登録ボタンを押して、表示された発注番号を結果に記録する。" },
-        { "id": "S-006", "action": "read_text", "target": "order_number",
+        { "id": "S-006", "action": "read_text", "destination": { "kind": "browser", "name": "stub" }, "target": "order_number",
           "verify": { "type": "element_exists", "value": "order_number" },
           "source": null }
       ] }

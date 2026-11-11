@@ -145,7 +145,7 @@ class PlanValidatorTest extends TestCase
     public function test_wait_forの待ち時間(): void
     {
         $p = $this->base();
-        $p->steps[] = StrictJson::decode('{"id":"S-050","action":"wait_for","source":null,"verify":{"type":"text_visible","value":"x"},"timeout_sec":9999}');
+        $p->steps[] = StrictJson::decode('{"id":"S-050","destination":{"kind":"browser","name":"stub"},"action":"wait_for","source":null,"verify":{"type":"text_visible","value":"x"},"timeout_sec":9999}');
         $this->assertHasError(PlanValidator::validate($p), 'timeout_sec');
     }
 
@@ -178,18 +178,18 @@ class PlanValidatorTest extends TestCase
 
         // 登録があれば、取り消せる扱いになる
         $policy = new OperationPolicy(
-            registeredButtons: ['submit_button' => true],
-            registeredAutosaveFreeInputs: ['item_code' => true, 'quantity' => true],
-            registeredUrls: ['login_page' => true],
+            registeredButtons: [OperationPolicy::registrationKey('stub', 'submit_button') => true],
+            registeredAutosaveFreeInputs: [OperationPolicy::registrationKey('stub', 'item_code') => true, OperationPolicy::registrationKey('stub', 'quantity') => true],
+            registeredUrls: [OperationPolicy::registrationKey('stub', 'login_page') => true],
         );
         $this->assertSame([], $policy->irreversibleStepIds($p));
     }
 
     public function test_press_keyとconfirm_dialogは常に取り消せない(): void
     {
-        $policy = new OperationPolicy(registeredButtons: ['x' => true]);
+        $policy = new OperationPolicy(registeredButtons: [OperationPolicy::registrationKey('stub', 'x') => true]);
         foreach (['press_key', 'confirm_dialog', 'unknown'] as $a) {
-            $this->assertFalse($policy->isReversible((object) ['action' => $a, 'target' => 'x', 'reversible' => true]));
+            $this->assertFalse($policy->isReversible((object) ['action' => $a, 'target' => 'x', 'destination' => (object) ['kind' => 'browser', 'name' => 'stub'], 'reversible' => true]));
         }
         $this->assertFalse($policy->isReversible((object) []));
     }
@@ -228,9 +228,9 @@ class PlanValidatorTest extends TestCase
         $p = $this->base();
         $p->steps[1]->steps[] = StrictJson::decode('{"id":"S-010","action":"on_dialog","source":null,"dialog_text":"登録しますか","response":"ok"}');
         $policy = new OperationPolicy(
-            registeredButtons: ['submit_button' => true],
-            registeredAutosaveFreeInputs: ['item_code' => true, 'quantity' => true],
-            registeredUrls: ['login_page' => true],
+            registeredButtons: [OperationPolicy::registrationKey('stub', 'submit_button') => true],
+            registeredAutosaveFreeInputs: [OperationPolicy::registrationKey('stub', 'item_code') => true, OperationPolicy::registrationKey('stub', 'quantity') => true],
+            registeredUrls: [OperationPolicy::registrationKey('stub', 'login_page') => true],
         );
         $this->assertSame(['S-005', 'S-010'], $policy->irreversibleStepIds($p));
         // stop なら、取り消せる
@@ -242,7 +242,7 @@ class PlanValidatorTest extends TestCase
     {
         foreach (['type_text', 'open_url', 'login'] as $action) {
             $p = StrictJson::decode(StubAiClient::defaultPlanJson());
-            $p->steps = [StrictJson::decode('{"id":"S-001","action":"'.$action.'","target":"t","value":"v","source":null,"verify":{"type":"text_visible","value":"x"}}')];
+            $p->steps = [StrictJson::decode('{"id":"S-001","destination":{"kind":"browser","name":"stub"},"action":"'.$action.'","target":"t","value":"v","source":null,"verify":{"type":"text_visible","value":"x"}}')];
             if ($action !== 'type_text') {
                 unset($p->steps[0]->value);
             }
@@ -270,7 +270,7 @@ class PlanValidatorTest extends TestCase
     {
         foreach (["abc\n", "a\tb", "a\0b", "a\x7fb", "\u{202e}abc"] as $bad) {
             $p = $this->base();
-            $p->steps[1]->steps[0] = StrictJson::decode('{"id":"S-003","action":"type_text","target":"item_code","value":"x","source":null,"verify":{"type":"text_visible","value":"x"}}');
+            $p->steps[1]->steps[0] = StrictJson::decode('{"id":"S-003","destination":{"kind":"browser","name":"stub"},"action":"type_text","target":"item_code","value":"x","source":null,"verify":{"type":"text_visible","value":"x"}}');
             $p->steps[1]->steps[0]->value = $bad;
             $this->assertNotSame([], PlanValidator::validate($p), json_encode($bad));
         }
@@ -279,7 +279,7 @@ class PlanValidatorTest extends TestCase
     public function test_列はfor_each_rowの外では使えない(): void
     {
         $p = $this->base();
-        $p->steps[] = StrictJson::decode('{"id":"S-060","action":"type_text","target":"item_code","column":"伝票番号","source":null,"verify":{"type":"text_visible","value":"x"}}');
+        $p->steps[] = StrictJson::decode('{"id":"S-060","destination":{"kind":"browser","name":"stub"},"action":"type_text","target":"item_code","column":"伝票番号","source":null,"verify":{"type":"text_visible","value":"x"}}');
         $this->assertHasError(PlanValidator::validate($p), 'for_each_row の中');
     }
 
@@ -333,5 +333,22 @@ class PlanValidatorTest extends TestCase
             $this->assertNull($r['plan']);
             $this->assertNotSame([], $r['errors']);
         }
+    }
+
+    public function test_接続先が違えば登録は使えない(): void
+    {
+        $p = $this->base();
+        $policy = new OperationPolicy(registeredButtons: [OperationPolicy::registrationKey('other', 'submit_button') => true]);
+        $this->assertContains('S-005', $policy->irreversibleStepIds($p));
+    }
+
+    public function test_接続先の欄は必須(): void
+    {
+        $p = $this->base();
+        unset($p->steps[0]->destination);
+        $this->assertHasError(PlanValidator::validate($p), 'destination');
+        $p = $this->base();
+        $p->steps[0]->destination->kind = 'ssh';
+        $this->assertHasError(PlanValidator::validate($p), 'browser');
     }
 }

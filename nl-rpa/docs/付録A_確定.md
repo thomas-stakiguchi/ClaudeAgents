@@ -27,11 +27,12 @@
 ## 手順
 共通：`id`（`S-数字`。計画の中で重複不可）、`action`、`source`（シナリオの文。なければ null＝「AIが補った」）、`label`（表示用、任意）
 
-- 操作（A-2）：open_url、read_text、type_text、clear_text、click、press_key、login、confirm_dialog、wait_for、write_result
+- 操作（A-2）：`destination`（`{kind, name}`。**必須**。1aの kind は browser のみ、name は英数字・`_`・`.`・`-`）。open_url、read_text、type_text、clear_text、click、press_key、login、confirm_dialog、wait_for、write_result
   - `target`：画面の記録の要素名（open_url、read_text、type_text、clear_text、click、login で必須）
   - `value`（固定値）か `column`（入力データの列名）：type_text と write_result で、どちらか一方だけ。`column` は、列定義にある名前
   - `verify`：確認条件（**必須**）。`type` は text_visible／text_equals／element_exists／url_matches／value_matches。`value_matches` は `rule`（照合ルール）が必須
   - `timeout_sec`：wait_for で必須（上限は300）
+  - `readback`：読み返し照合の項目の配列（任意。ただし、取り消せない手順に指定がなければ、12-1の関数が拒否する）。各項目は `target`（読み返す要素名）と、`column`（入力データの列）か `value`（固定値）のどちらか一方、`rule`（任意）
   - `reversible`：**信用しない**。AIが書いていても無視し、取り消し可否は `OperationPolicy` が計算する（R4）
 - 構文（A-3）
   - `for_each_row`：`steps` を持つ。入れ子にできない
@@ -51,9 +52,20 @@
 - 呼び出し側が渡せば、次も照合する：シナリオ（根拠の文）、人が定義した列、画面の記録の要素名、組織の件数の最大値
 
 ## 未確定（次に決める）
-- 手順の「接続先（種類と名前）」の欄（8-1）。7-1-1・SEC-8・14-7を強制するために必要。OperationPolicy も接続先ごとの登録に変える
-- 読み返し照合する項目の欄（9-3）。今は verify の中だけ
 - `verify.value` の意味（列名か固定値か）。今のスタブは列名を書いている
 - press_key の「押すキー」の欄
 - `created_by_ai`、`allowlist_versions`、`screen_record_version`、`plan_id` などの自己申告は、計画を作る処理（app側）が実行エンジンの値で上書きする。ゲートはまだ上書きしない
 - `unresolved`（未確定）をAIが書かずに隠すことは、決定的な検査では防げない。承認画面で補う（方法は未定）
+
+## 12-1の関数（`IrreversibleGuard`）で決めたこと
+- 取り消せる手順は、この関数を通さない（取り消し可否は `OperationPolicy` が決める）
+- `readback` がない取り消せない手順は、拒否する（安全側。必要なら、のちに緩める）
+- ドライランの記録は `{dry_run_id, result, environment, destination_name}`。1aは environment=stub だけを有効とする
+- 承認の記録は `{stage:'final', approver, os_user}`。計画ハッシュに結び付ける。**承認の取り消し（revoke）は未実装**
+- 拒否は、理由つきで `ledger`（kind=refusal）に記録する
+- 「処理中」の保存が最後。保存に失敗したら実行しない。実行後の異常・確認条件の不成立は、すべて「要確認」
+- 初回1件の確認は、`first_row_confirmed`（subject=run_id）の記録で判定する
+
+## SQLiteについて（仕様14-3の「要確認」の結果）
+- PHP 8.3.6 の pdo_sqlite では、`exec('BEGIN IMMEDIATE')` で始めたトランザクションを、`PDO::inTransaction()` は認識しない（`false` を返す）。そのため、`Db::immediate` は `inTransaction()` に頼らず、自分で管理している深さで COMMIT / ROLLBACK する
+- PHP 8.5.12 で同じ挙動かは、未確認（8.5.12 が用意できたら確認する）

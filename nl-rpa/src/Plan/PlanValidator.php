@@ -13,6 +13,8 @@ final class PlanValidator
     public const ACTIONS = ['open_url', 'read_text', 'type_text', 'clear_text', 'click', 'press_key', 'login', 'confirm_dialog', 'wait_for', 'write_result'];
     public const SYNTAX = ['for_each_row', 'if', 'on_dialog'];
     public const VERIFY_TYPES = ['text_visible', 'text_equals', 'element_exists', 'url_matches', 'value_matches'];
+    /** 1aで使える接続先の種類（仕様3-4。第1段階はブラウザのみ） */
+    public const DESTINATION_KINDS = ['browser'];
     private const NEEDS_TARGET = ['open_url', 'read_text', 'type_text', 'clear_text', 'click', 'login'];
     private const COLUMN_TYPES = ['text', 'number', 'date'];
     private const ROLES = ['business_key', 'quantity', 'amount', 'personal_info'];
@@ -259,10 +261,10 @@ final class PlanValidator
                 $o = $this->obj($s, $path, [...$req, 'dialog_text', 'response'], $opt);
                 break;
             default:
-                $required = [...$req, 'verify'];
+                $required = [...$req, 'destination', 'verify'];
                 in_array($action, self::NEEDS_TARGET, true) && $required[] = 'target';
                 $action === 'wait_for' && $required[] = 'timeout_sec';
-                $optional = [...$opt, 'reversible'];
+                $optional = [...$opt, 'reversible', 'readback'];
                 in_array($action, ['type_text', 'write_result'], true) && array_push($optional, 'value', 'column');
                 $o = $this->obj($s, $path, $required, $optional);
         }
@@ -306,6 +308,10 @@ final class PlanValidator
     private function action(\stdClass $o, string $action, string $path, bool $inLoop): void
     {
         property_exists($o, 'target') && $this->str($o->target, "{$path}.target");
+        if (property_exists($o, 'destination') && ($d = $this->obj($o->destination, "{$path}.destination", ['kind', 'name']))) {
+            isset($d->kind) && ! in_array($d->kind, self::DESTINATION_KINDS, true) && $this->e("{$path}.destination.kind", '1aで使える接続先の種類は browser だけです');
+            isset($d->name) && $this->str($d->name, "{$path}.destination.name", '/\A[A-Za-z0-9_.-]+\z/');
+        }
         $hasValue = property_exists($o, 'value');
         $hasColumn = property_exists($o, 'column');
         if (in_array($action, ['type_text', 'write_result'], true)) {
@@ -324,6 +330,36 @@ final class PlanValidator
             }
         }
         isset($o->verify) && $this->verify($o->verify, "{$path}.verify");
+        property_exists($o, 'readback') && $this->readback($o->readback, "{$path}.readback", $inLoop);
+    }
+
+    /** 読み返し照合の項目（9-3）。取り消せない操作の直前に、画面から読み返して、入力データの値と比べる */
+    private function readback(mixed $r, string $path, bool $inLoop): void
+    {
+        if (! is_array($r) || $r === [] || ! array_is_list($r)) {
+            $this->e($path, '1つ以上の項目の配列にしてください');
+
+            return;
+        }
+        foreach ($r as $i => $item) {
+            $p = "{$path}[{$i}]";
+            $o = $this->obj($item, $p, ['target'], ['column', 'value', 'rule']);
+            if ($o === null) {
+                continue;
+            }
+            isset($o->target) && $this->str($o->target, "{$p}.target");
+            $hasC = property_exists($o, 'column');
+            $hasV = property_exists($o, 'value');
+            if ($hasC === $hasV) {
+                $this->e($p, 'column（入力データの列）か value（固定値）の、どちらか一方だけを指定してください');
+            }
+            $hasV && $this->str($o->value, "{$p}.value", null, false);
+            if ($hasC && $this->str($o->column, "{$p}.column")) {
+                ! isset($this->columns[$o->column]) && $this->e("{$p}.column", "列定義にない列です: {$o->column}");
+                ! $inLoop && $this->e("{$p}.column", '入力データの列は、for_each_row の中でだけ使えます');
+            }
+            property_exists($o, 'rule') && $this->rule($o->rule, "{$p}.rule");
+        }
     }
 
     private function verify(mixed $v, string $path): void

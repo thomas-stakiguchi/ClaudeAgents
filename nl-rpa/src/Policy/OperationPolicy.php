@@ -17,9 +17,11 @@ namespace Src\Policy;
 final class OperationPolicy
 {
     /**
-     * @param array<string,true> $registeredButtons    個別登録されたボタンの要素名
-     * @param array<string,true> $registeredAutosaveFreeInputs 「自動保存なし」と登録された入力欄の要素名
-     * @param array<string,true> $registeredUrls       登録されたURLパターンの対象名（画面の記録の名前）
+     * 登録は、接続先ごと（7-1-1）。キーは registrationKey(接続先名, 要素名) で作る。
+     *
+     * @param array<string,true> $registeredButtons    個別登録されたボタン
+     * @param array<string,true> $registeredAutosaveFreeInputs 「自動保存なし」と登録された入力欄
+     * @param array<string,true> $registeredUrls       登録されたURLパターンの対象（画面の記録の名前）
      * @param array<string,true> $registeredPasswordFields 登録されたパスワード欄
      */
     public function __construct(
@@ -30,10 +32,17 @@ final class OperationPolicy
     ) {
     }
 
+    public static function registrationKey(string $destinationName, string $target): string
+    {
+        return $destinationName."\0".$target;
+    }
+
     public function isReversible(\stdClass $step): bool
     {
         $action = $step->action ?? null;
-        $target = $step->target ?? null;
+        $dest = $step->destination ?? null;
+        $name = $dest instanceof \stdClass && is_string($dest->name ?? null) ? $dest->name : null;
+        $target = is_string($step->target ?? null) && $name !== null ? self::registrationKey($name, $step->target) : null;
         if (! is_string($action)) {
             return false;
         }
@@ -41,10 +50,10 @@ final class OperationPolicy
         return match ($action) {
             'read_text', 'wait_for', 'write_result' => true,
             'on_dialog' => ($step->response ?? null) === 'stop', // OKする確認ダイアログは、取り消せない（7-1、A-2）
-            'open_url' => is_string($target) && isset($this->registeredUrls[$target]),
-            'type_text', 'clear_text' => is_string($target) && isset($this->registeredAutosaveFreeInputs[$target]),
-            'click' => is_string($target) && isset($this->registeredButtons[$target]),
-            'login' => is_string($target) && isset($this->registeredPasswordFields[$target]),
+            'open_url' => $target !== null && isset($this->registeredUrls[$target]),
+            'type_text', 'clear_text' => $target !== null && isset($this->registeredAutosaveFreeInputs[$target]),
+            'click' => $target !== null && isset($this->registeredButtons[$target]),
+            'login' => $target !== null && isset($this->registeredPasswordFields[$target]),
             default => false, // press_key、confirm_dialog、未知の操作は、すべて取り消せない
         };
     }
