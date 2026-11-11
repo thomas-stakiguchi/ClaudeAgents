@@ -32,6 +32,40 @@ final class OperationPolicy
     ) {
     }
 
+    /**
+     * 承認済みの個別登録（計画ハッシュに含まれる hashInputs['registrations']）から作る（7-1-1、12-1）。
+     * 形：オブジェクト {buttons, autosave_free_inputs, urls, password_fields}。それぞれ [{destination, target}] の配列。
+     * 空の配列 [] は、登録なし。形が違えば InvalidArgumentException。
+     *
+     * @param \stdClass|array<mixed> $reg
+     */
+    public static function fromRegistrations(\stdClass|array $reg): self
+    {
+        if (is_array($reg)) {
+            if ($reg !== []) {
+                throw new \InvalidArgumentException('登録はオブジェクトで渡してください');
+            }
+            return new self();
+        }
+        $map = ['buttons' => [], 'autosave_free_inputs' => [], 'urls' => [], 'password_fields' => []];
+        foreach (get_object_vars($reg) as $k => $items) {
+            if (! array_key_exists($k, $map)) {
+                throw new \InvalidArgumentException("知らない登録の種類です: {$k}");
+            }
+            if (! is_array($items) || ! array_is_list($items)) {
+                throw new \InvalidArgumentException("{$k} は配列にしてください");
+            }
+            foreach ($items as $it) {
+                if (! $it instanceof \stdClass || ! is_string($it->destination ?? null) || ! is_string($it->target ?? null) || $it->destination === '' || $it->target === '') {
+                    throw new \InvalidArgumentException("{$k} の項目は {destination, target} にしてください");
+                }
+                $map[$k][self::registrationKey($it->destination, $it->target)] = true;
+            }
+        }
+
+        return new self($map['buttons'], $map['autosave_free_inputs'], $map['urls'], $map['password_fields']);
+    }
+
     public static function registrationKey(string $destinationName, string $target): string
     {
         return $destinationName."\0".$target;

@@ -56,6 +56,16 @@ final class Ledger
         return $r ? json_decode((string) $r['payload'], false, 512, JSON_THROW_ON_ERROR) : null;
     }
 
+    /** 最新の1件を、連番つきで返す。なければ null */
+    public function latestWithSeq(string $kind, string $subject): ?array
+    {
+        $st = $this->db->pdo->prepare('SELECT seq, payload FROM ledger WHERE kind = ? AND subject = ? ORDER BY seq DESC LIMIT 1');
+        $st->execute([$kind, $subject]);
+        $r = $st->fetch();
+
+        return $r ? ['seq' => (int) $r['seq'], 'payload' => json_decode((string) $r['payload'], false, 512, JSON_THROW_ON_ERROR)] : null;
+    }
+
     /** @return list<\stdClass> 古い順 */
     public function all(string $kind, string $subject): array
     {

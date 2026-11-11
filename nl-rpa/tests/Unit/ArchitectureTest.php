@@ -44,4 +44,37 @@ class ArchitectureTest extends TestCase
             $this->assertStringNotContainsString('HeadlessChromium', file_get_contents($file), $file);
         }
     }
+
+    public function test_取り消せない操作の実装はGuardedActionの継承に限る(): void
+    {
+        $root = dirname(__DIR__, 2);
+        foreach (array_merge($this->phpFiles($root.'/src'), $this->phpFiles($root.'/app')) as $file) {
+            $code = file_get_contents($file);
+            if (str_ends_with($file, '/Guard/IrreversibleAction.php') || str_ends_with($file, '/Guard/GuardedAction.php')) {
+                continue;
+            }
+            $this->assertDoesNotMatchRegularExpression('/implements\s+[^{]*IrreversibleAction/', $code, $file);
+        }
+    }
+
+    public function test_executeはGuardedActionの中でだけ呼ぶ(): void
+    {
+        $root = dirname(__DIR__, 2);
+        foreach (array_merge($this->phpFiles($root.'/src'), $this->phpFiles($root.'/app')) as $file) {
+            if (str_ends_with($file, '/Guard/GuardedAction.php')) {
+                continue;
+            }
+            $this->assertDoesNotMatchRegularExpression('/->execute\s*\(\s*\$(proof|permit|redeemed|forged)/i', file_get_contents($file), $file);
+        }
+    }
+
+    public function test_srcでリフレクションによる生成をしない(): void
+    {
+        foreach ($this->phpFiles(dirname(__DIR__, 2).'/src') as $file) {
+            $code = file_get_contents($file);
+            $this->assertStringNotContainsString('newInstanceWithoutConstructor', $code, $file);
+            $this->assertStringNotContainsString('ReflectionClass', $code, $file);
+            $this->assertStringNotContainsString('Closure::bind', $code, $file);
+        }
+    }
 }

@@ -27,19 +27,25 @@ final class IrreversibleGuard
 {
     /** @var array<string,true> 発行した許可の合言葉（使い捨て） */
     private array $issued = [];
+    /** @var array<string,Permit> 照合済みの証明の token（使い捨て） */
+    private array $redeemed = [];
 
     public function __construct(
         private readonly Ledger $ledger,
         private readonly StepStateStore $states,
         private readonly Flags $flags,
-        private readonly OperationPolicy $policy,
         private readonly ApprovalChecker $approvals,
     ) {
     }
 
     public function run(GuardRequest $r, GuardedAction $action): GuardOutcome
     {
-        if (! $action->belongsTo($this)) {
+        try {
+            $mine = $action->belongsTo($this);
+        } catch (\Error) {
+            $mine = false; // 親のコンストラクタを呼ばない継承など
+        }
+        if (! $mine) {
             $this->logRefusal($r, ['この操作は、別のGuardに結び付いています']);
 
             return GuardOutcome::refused(['この操作は、別のGuardに結び付いています']);
@@ -66,7 +72,7 @@ final class IrreversibleGuard
                 : $this->states->markNeedsReview($r->businessKey, $r->stepId);
         } catch (\Throwable $e) {
             // 実行後に状態を保存できなかった。「処理中」のまま残る（次の起動時に「要確認」になる。二重実行にはならない）
-            $this->logRefusal($r, ['実行後の状態を保存できませんでした: '.$e->getMessage()]);
+            $this->logPostExecFailure($r, '実行後の状態を保存できませんでした: '.$e->getMessage());
 
             return GuardOutcome::executedButUnsaved();
         }
@@ -75,15 +81,38 @@ final class IrreversibleGuard
     }
 
     /**
-     * 操作の側が、実行の直前に呼ぶ（GuardedAction::perform が呼ぶ）。
-     * 許可の合言葉（使い捨て）と、保存先の状態（「処理中」で、実行ID・計画ハッシュが一致）を照合し直す。
+     * GuardedAction::perform が呼ぶ。許可の合言葉（使い捨て）と、保存先の状態（「処理中」で、実行ID・計画ハッシュが一致）を
+     * 照合し直し、使い捨ての証明（Redeemed）を返す。
      */
-    public function redeem(Permit $p): void
+    public function redeem(Permit $p): Redeemed
     {
         if (! isset($this->issued[$p->nonce])) {
             throw new \LogicException('この許可は、Guardが発行したものではないか、使用済みです');
         }
         unset($this->issued[$p->nonce]);
+        $this->assertProcessing($p);
+        $token = bin2hex(random_bytes(16));
+        $this->redeemed[$token] = $p;
+
+        return Redeemed::mint($this, $p, $token);
+    }
+
+    /**
+     * 本当に取り消せない操作をする瞬間に、操作の側が呼ぶ（GuardedAction::effect が呼ぶ）。証明は、1回だけ使える。
+     * 証明の token と、保存先の状態を、もう一度照合する。
+     */
+    public function assertRedeemed(Redeemed $proof): void
+    {
+        $p = $this->redeemed[$proof->token] ?? null;
+        if ($p === null || $p !== $proof->permit) {
+            throw new \LogicException('この証明は、Guardが発行したものではないか、使用済みです');
+        }
+        unset($this->redeemed[$proof->token]);
+        $this->assertProcessing($p);
+    }
+
+    private function assertProcessing(Permit $p): void
+    {
         $cur = $this->states->current($p->businessKey, $p->stepId);
         if ($cur === null || $cur['state'] !== StepStateStore::PROCESSING || $cur['run_id'] !== $p->runId || $cur['plan_hash'] !== $p->planHash) {
             throw new \LogicException('保存先の状態が、許可と一致しません');
@@ -135,12 +164,18 @@ final class IrreversibleGuard
         // 4. 未確定
         PlanValidator::hasUnresolved($plan) && $reasons[] = '「未確定」が残っています';
 
-        // 5. 手順の特定。取り消せない手順だけが、この関数を通る
+        // 5. 手順の特定。取り消せない手順だけが、この関数を通る。
+        //    取り消し可否は、承認済みの個別登録（計画ハッシュに含まれる hashInputs['registrations']）から計算する
         $step = self::findStep($plan->steps, $r->stepId);
         if ($step === null) {
             return [...$reasons, "手順IDが計画にありません: {$r->stepId}"];
         }
-        if (! in_array($r->stepId, $this->policy->irreversibleStepIds($plan), true)) {
+        try {
+            $policy = OperationPolicy::fromRegistrations($r->hashInputs['registrations']);
+        } catch (\InvalidArgumentException $e) {
+            return [...$reasons, '個別登録の形式が不正です: '.$e->getMessage()];
+        }
+        if (! in_array($r->stepId, $policy->irreversibleStepIds($plan), true)) {
             $reasons[] = '取り消せる手順は、この関数を通しません';
         }
         ! isset($step->verify) && $reasons[] = '確認条件が定義されていません';
@@ -153,6 +188,8 @@ final class IrreversibleGuard
             $reasons[] = '実際の接続先が、計画・実行の登録の接続先と違います';
         }
         $dry['destination'] !== null && $dry['destination'] !== $destName && $reasons[] = 'ドライランの接続先が、計画の接続先と違います';
+
+        ($kp = BusinessKey::problem($r->businessKey)) !== null && $reasons[] = "業務キーが不正です（{$kp}）";
 
         // 7. 行（登録した入力データと照合）
         $index = $this->rowIndex($run, $r, $plan, $reasons);
@@ -169,10 +206,16 @@ final class IrreversibleGuard
         (! isset($l->max_rows_per_run) || $total > $l->max_rows_per_run) && $reasons[] = '件数の上限を超えます（または、上限が計画にありません）';
         if ($index !== null && $index >= 1) {
             $first = $run->rows[0]->business_key ?? null;
-            if ($this->ledger->latest('first_row_confirmed', $r->runId) === null) {
+            $confirm = $this->ledger->latestWithSeq('first_row_confirmed', $r->runId);
+            $firstState = is_string($first) ? $this->ledger->latestWithSeq('state', StepStateStore::subject($first, $r->stepId)) : null;
+            if ($confirm === null) {
                 $reasons[] = '初回の1件の確認が済んでいません';
-            } elseif (! is_string($first) || $this->states->get($first, $r->stepId) !== StepStateStore::SUCCEEDED) {
+            } elseif (! is_string($confirm['payload']->by ?? null) || $confirm['payload']->by === '' || ! is_string($confirm['payload']->os_user ?? null) || $confirm['payload']->os_user === '') {
+                $reasons[] = '初回の1件の確認の記録に、確認者がありません';
+            } elseif ($firstState === null || ($firstState['payload']->state ?? null) !== StepStateStore::SUCCEEDED || ! is_string($first) || $this->states->get($first, $r->stepId) !== StepStateStore::SUCCEEDED) {
                 $reasons[] = '初回の1件が、成功していません';
+            } elseif ($confirm['seq'] < $firstState['seq']) {
+                $reasons[] = '初回の1件の確認が、その1件の成功より前に記録されています';
             }
         }
 
@@ -289,6 +332,14 @@ final class IrreversibleGuard
         }
 
         return null;
+    }
+
+    private function logPostExecFailure(GuardRequest $r, string $message): void
+    {
+        try {
+            $this->ledger->append('post_exec_failure', StepStateStore::subject($r->businessKey, $r->stepId), (object) ['run_id' => $r->runId, 'message' => $message]);
+        } catch (\Throwable) {
+        }
     }
 
     /** @param list<string> $reasons */

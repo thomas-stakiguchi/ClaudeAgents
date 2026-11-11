@@ -18,8 +18,61 @@ use Src\State\Ledger;
  */
 final class RunRegistrar
 {
-    public function __construct(private readonly Ledger $ledger, private readonly ApprovalChecker $approvals)
+    /** 数量・金額は、小数4桁までの固定小数（整数に直して）で数える。浮動小数点の丸めで、上限をすり抜けさせない */
+    private const SCALE = 10000;
+
+    public function __construct(
+        private readonly Ledger $ledger,
+        private readonly ApprovalChecker $approvals,
+        /** 組織全体の件数の最大値（SEC-14）。計画の上限が、これを超えていれば、登録しない */
+        private readonly ?int $orgMaxRows = null,
+    ) {
+    }
+
+    /** 数値の形：符号なし、3桁区切り（または区切りなし）、小数は4桁まで、整数部は12桁まで。前後の空白は不可 */
+    private static function parseDecimal(string $v, bool $allowNegative): ?int
     {
+        $re = '/\A(-?)((?:[0-9]{1,12})|(?:[0-9]{1,3}(?:,[0-9]{3}){1,3}))(?:\.([0-9]{1,4}))?\z/';
+        if (! preg_match($re, $v, $m) || ($m[1] === '-' && ! $allowNegative)) {
+            return null;
+        }
+        $int = (int) str_replace(',', '', $m[2]);
+        if ($int > 999999999999) {
+            return null;
+        }
+        $frac = (int) str_pad($m[3] ?? '', 4, '0');
+        $n = $int * self::SCALE + $frac;
+
+        return $m[1] === '-' ? -$n : $n;
+    }
+
+    /** 列の型の検査（付録A-4）。問題があれば、理由 */
+    private static function typeProblem(\stdClass $c, string $v): ?string
+    {
+        if ($v === '') {
+            return null; // 空は、required で別に検査する
+        }
+        switch ($c->type) {
+            case 'number':
+                return self::parseDecimal($v, true) === null ? '数値ではありません' : null;
+            case 'date':
+                $fmt = self::phpDateFormat((string) ($c->format ?? 'YYYY-MM-DD'));
+                $d = $fmt === null ? false : \DateTimeImmutable::createFromFormat('!'.$fmt, $v);
+                $err = \DateTimeImmutable::getLastErrors();
+
+                return ($d === false || ($err !== false && ($err['warning_count'] > 0 || $err['error_count'] > 0)) || $d->format($fmt) !== $v)
+                    ? '日付の形式が合いません' : null;
+        }
+
+        return null;
+    }
+
+    /** 付録Aの書式（YYYY-MM-DD など）を、PHPの書式に直す。対応しない文字があれば null */
+    private static function phpDateFormat(string $f): ?string
+    {
+        $out = strtr($f, ['YYYY' => 'Y', 'MM' => 'm', 'DD' => 'd', 'HH' => 'H', 'mm' => 'i', 'ss' => 's']);
+
+        return preg_match('/\A[YmdHis\-\/: .]+\z/', $out) ? $out : null;
     }
 
     /**
@@ -29,9 +82,27 @@ final class RunRegistrar
      */
     public function register(string $runId, \stdClass $plan, array $hashInputs, string $dryRunId, string $destinationName, array $rows): array
     {
-        $errors = PlanValidator::validate($plan);
+        try {
+            return $this->doRegister($runId, $plan, $hashInputs, $dryRunId, $destinationName, $rows);
+        } catch (\Throwable $e) {
+            // 想定外の形の入力でも、例外を外へ出さず、理由として返す（R8）
+            return ['登録できません（想定外の入力）: '.get_debug_type($e).': '.$e->getMessage()];
+        }
+    }
+
+    /**
+     * @param array<string,mixed> $hashInputs
+     * @param array<mixed> $rows
+     * @return list<string>
+     */
+    private function doRegister(string $runId, \stdClass $plan, array $hashInputs, string $dryRunId, string $destinationName, array $rows): array
+    {
+        $errors = PlanValidator::validate($plan, $this->orgMaxRows);
         if ($errors !== []) {
             return ['計画の形式が不正です: '.$errors[0]];
+        }
+        if (! array_is_list($rows)) {
+            return ['入力データは、行の連番の配列で渡してください'];
         }
         if ($runId === '' || $this->ledger->latest('run', $runId) !== null) {
             return ['実行IDが空か、すでに登録されています'];
@@ -61,47 +132,58 @@ final class RunRegistrar
         }
         $rowRecords = [];
         $seen = [];
-        $qty = 0.0;
-        $amt = 0.0;
+        $qty = 0;
+        $amt = 0;
+        $overflow = false;
         foreach ($rows as $i => $row) {
             $n = $i + 1;
+            if (! is_array($row)) {
+                $reasons[] = "{$n}行目: 行の形式が不正です";
+                continue;
+            }
             foreach ($cols as $name => $c) {
                 $v = $row[$name] ?? null;
                 if (! is_string($v)) {
                     $reasons[] = "{$n}行目: 列「{$name}」の値がありません";
                     continue;
                 }
-                if (preg_match('/[\x00-\x1f\x7f]/', $v)) {
-                    $reasons[] = "{$n}行目: 列「{$name}」に制御文字があります";
+                if (! mb_check_encoding($v, 'UTF-8') || preg_match('/[\p{C}]/u', $v)) {
+                    $reasons[] = "{$n}行目: 列「{$name}」に制御文字などがあります";
+                    continue;
                 }
                 ($c->required ?? false) === true && $v === '' && $reasons[] = "{$n}行目: 必須の列「{$name}」が空です";
                 isset($c->max_bytes) && strlen($v) > $c->max_bytes && $reasons[] = "{$n}行目: 列「{$name}」が長すぎます";
+                ($p = self::typeProblem($c, $v)) !== null && $reasons[] = "{$n}行目: 列「{$name}」: {$p}";
                 $role = $c->role ?? null;
                 if (($role === 'quantity' || $role === 'amount') && $v !== '') {
-                    $num = str_replace([',', '，'], '', $v);
-                    if (! is_numeric($num)) {
-                        $reasons[] = "{$n}行目: 列「{$name}」が数値ではありません";
+                    $num = self::parseDecimal($v, false); // 数量・金額は、負の値を認めない（合計で上限を迂回されるため）
+                    if ($num === null) {
+                        $reasons[] = "{$n}行目: 列「{$name}」は、0以上の数値（小数4桁まで）にしてください";
                     } elseif ($role === 'quantity') {
-                        $qty += (float) $num;
+                        $num > PHP_INT_MAX - $qty ? $overflow = true : $qty += $num;
                     } else {
-                        $amt += (float) $num;
+                        $num > PHP_INT_MAX - $amt ? $overflow = true : $amt += $num;
                     }
                 }
             }
-            $key = $keyCol !== null ? ($row[$keyCol] ?? '') : '';
-            if ($key === '' || isset($seen[$key])) {
-                $reasons[] = "{$n}行目: 業務キーが空か、重複しています";
+            $key = $keyCol !== null && is_string($row[$keyCol] ?? null) ? $row[$keyCol] : '';
+            if (($kp = BusinessKey::problem($key)) !== null) {
+                $reasons[] = "{$n}行目: 業務キーが不正です（{$kp}）";
+            } else {
+                $folded = BusinessKey::fold($key);
+                isset($seen[$folded]) && $reasons[] = "{$n}行目: 業務キーが重複しています（大文字小文字の違いも同じとみなします）";
+                $seen[$folded] = true;
             }
-            $seen[$key] = true;
             $rowRecords[] = (object) ['business_key' => $key, 'values_hash' => self::rowHash($row)];
         }
+        $overflow && $reasons[] = '数量・金額の合計が大きすぎます';
         if ($rows === []) {
             $reasons[] = '入力データが0件です';
         }
         $l = $plan->limits;
         isset($l->max_rows_per_run) && count($rows) > $l->max_rows_per_run && $reasons[] = '件数の上限を超えています';
-        isset($l->max_quantity_per_run) && $qty > $l->max_quantity_per_run && $reasons[] = '数量の上限を超えています';
-        isset($l->max_amount_per_run) && $amt > $l->max_amount_per_run && $reasons[] = '金額の上限を超えています';
+        isset($l->max_quantity_per_run) && $qty > $l->max_quantity_per_run * self::SCALE && $reasons[] = '数量の上限を超えています';
+        isset($l->max_amount_per_run) && $amt > $l->max_amount_per_run * self::SCALE && $reasons[] = '金額の上限を超えています';
 
         if ($reasons !== []) {
             return $reasons;
@@ -116,7 +198,7 @@ final class RunRegistrar
         return [];
     }
 
-    /** @param array<string,string> $row */
+    /** @param array<mixed> $row */
     public static function rowHash(array $row): string
     {
         return 'sha256:'.hash('sha256', CanonicalJson::encode((object) $row));

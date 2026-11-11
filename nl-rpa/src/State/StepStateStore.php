@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Src\State;
 
+use Src\Guard\BusinessKey;
+
 /**
  * 「行（業務キー） × 取り消せない手順（手順ID）」の状態（仕様10章）。
  * 遷移は、ここに書いたものだけ。すべて、ledger への記録と同じトランザクションで行う。
@@ -26,12 +28,13 @@ final class StepStateStore
     /** ledger の subject。区切りの取り違えを避けるため、JSONの配列にする */
     public static function subject(string $businessKey, string $stepId): string
     {
-        return json_encode([$businessKey, $stepId], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        return json_encode([BusinessKey::fold($businessKey), $stepId], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     }
 
     /** @return array{state:string,plan_hash:string,run_id:string}|null */
     public function current(string $businessKey, string $stepId): ?array
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $st = $this->db->pdo->prepare('SELECT state, plan_hash, run_id FROM step_states WHERE business_key = ? AND step_id = ?');
         $st->execute([$businessKey, $stepId]);
         $r = $st->fetch();
@@ -41,6 +44,7 @@ final class StepStateStore
 
     public function get(string $businessKey, string $stepId): ?string
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $st = $this->db->pdo->prepare('SELECT state FROM step_states WHERE business_key = ? AND step_id = ?');
         $st->execute([$businessKey, $stepId]);
         $r = $st->fetch();
@@ -51,6 +55,7 @@ final class StepStateStore
     /** 同じ業務キーに、未解消（処理中・要確認）がある手順IDの一覧（別の版・別のシナリオも含む。9-4、10-3） */
     public function unresolvedFor(string $businessKey): array
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $st = $this->db->pdo->prepare("SELECT step_id FROM step_states WHERE business_key = ? AND state IN ('processing','needs_review') ORDER BY step_id");
         $st->execute([$businessKey]);
 
@@ -66,6 +71,7 @@ final class StepStateStore
      */
     public function markProcessing(string $businessKey, string $stepId, string $planHash, string $runId, ?\Closure $recheck = null): void
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $this->db->immediate(function () use ($businessKey, $stepId, $planHash, $runId, $recheck): void {
             $cur = $this->get($businessKey, $stepId);
             if ($cur !== null && $cur !== self::FAILED) {
@@ -82,18 +88,21 @@ final class StepStateStore
     /** 処理中 → 成功 */
     public function markSucceeded(string $businessKey, string $stepId): void
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $this->transition($businessKey, $stepId, [self::PROCESSING], self::SUCCEEDED);
     }
 
     /** 処理中 → 要確認（「処理中」を書いた後の異常は、すべてこれ。10-1） */
     public function markNeedsReview(string $businessKey, string $stepId): void
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $this->transition($businessKey, $stepId, [self::PROCESSING], self::NEEDS_REVIEW);
     }
 
     /** 人の判定（10-2）。「実行済み」→ 成功、「未実行」→ 失敗（再実行の対象） */
     public function resolve(string $businessKey, string $stepId, bool $executed, string $judge): void
     {
+        $businessKey = BusinessKey::fold($businessKey);
         $this->transition($businessKey, $stepId, [self::NEEDS_REVIEW, self::PROCESSING], $executed ? self::SUCCEEDED : self::FAILED, $judge);
     }
 
