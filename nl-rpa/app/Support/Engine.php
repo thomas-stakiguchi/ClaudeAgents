@@ -122,6 +122,26 @@ final class Engine
         return CanonicalJson::encode((object) $inputs) === CanonicalJson::encode((object) StubRegistrations::hashInputs());
     }
 
+    /** 使い捨てのブラウザプロファイルの置き場（データの置き場の中） */
+    public function profileRoot(): string
+    {
+        return $this->dataDir.'/profiles';
+    }
+
+    /**
+     * ブラウザ部品に渡す、プロファイルの作成・破棄の通知。記録しておき、異常終了のあとに、回収できるようにする。
+     *
+     * @return \Closure(string,string):void
+     */
+    public function profileNotifier(): \Closure
+    {
+        $pid = getmypid();
+
+        return function (string $event, string $dir) use ($pid): void {
+            $event === 'created' ? $this->store->registerProfile($dir, $pid) : $this->store->unregisterProfile($dir);
+        };
+    }
+
     public function runLock(): RunLock
     {
         return new RunLock($this->dataDir.'/run.lock');

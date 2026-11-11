@@ -90,5 +90,12 @@ final class Schema
         // 既存のDBには、列がないので、足す（プロセスの開始時刻。PIDの再利用で、別のプロセスを終了しないため）
         $cols = array_column($pdo->query('PRAGMA table_info(workers)')->fetchAll(), 'name');
         in_array('proc_start', $cols, true) || $pdo->exec('ALTER TABLE workers ADD COLUMN proc_start TEXT');
+
+        // ブラウザの使い捨てプロファイル（異常終了のあと、残ったプロファイルと、孤児になったChromeを、回収するための記録）
+        $pdo->exec('CREATE TABLE IF NOT EXISTS browser_profiles (
+            dir TEXT PRIMARY KEY,
+            worker_pid INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )');
     }
 }

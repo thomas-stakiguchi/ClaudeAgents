@@ -221,4 +221,31 @@ final class AppStore
             $this->db->pdo->query('SELECT * FROM workers')->fetchAll(),
         );
     }
+
+    public function registerProfile(string $dir, int $workerPid): void
+    {
+        $st = $this->db->pdo->prepare('INSERT OR REPLACE INTO browser_profiles (dir, worker_pid, created_at) VALUES (?,?,?)');
+        $st->execute([$dir, $workerPid, ($this->clock)()]);
+    }
+
+    public function unregisterProfile(string $dir): void
+    {
+        $st = $this->db->pdo->prepare('DELETE FROM browser_profiles WHERE dir = ?');
+        $st->execute([$dir]);
+    }
+
+    /** @return list<array{dir:string, worker_pid:int}> */
+    public function profiles(?int $workerPid = null): array
+    {
+        $rows = $workerPid === null
+            ? $this->db->pdo->query('SELECT dir, worker_pid FROM browser_profiles ORDER BY created_at')->fetchAll()
+            : (function () use ($workerPid): array {
+                $st = $this->db->pdo->prepare('SELECT dir, worker_pid FROM browser_profiles WHERE worker_pid = ? ORDER BY created_at');
+                $st->execute([$workerPid]);
+
+                return $st->fetchAll();
+            })();
+
+        return array_map(static fn (array $r): array => ['dir' => (string) $r['dir'], 'worker_pid' => (int) $r['worker_pid']], $rows);
+    }
 }

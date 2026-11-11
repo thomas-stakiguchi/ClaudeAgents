@@ -66,6 +66,13 @@ class NlrpaEmergencyStop extends Command
             }
             $killed += count($targets);
             $e->store->unregisterWorker($w['pid']);
+            // このワーカーの使い捨てプロファイルも、回収する（親を失って孤児になったChromeは、子孫として見つからないため）
+            $profiles = $e->store->profiles($w['pid']);
+            $r = \App\Support\ProfileCleaner::clean($e->profileRoot(), array_column($profiles, 'dir'));
+            $killed += $r['processes'];
+            foreach ($profiles as $p) {
+                in_array($p['dir'], $r['skipped'], true) || $e->store->unregisterProfile($p['dir']);
+            }
             $this->line("PID {$w['pid']} と子孫のプロセスを終了しました（".count($targets).'件）');
         }
         if ($failed > 0) {

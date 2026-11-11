@@ -678,4 +678,77 @@ class WebTest extends TestCase
         }
         $this->assertFalse(Engine::isInside('/tmp/somewhere', $repo));
     }
+
+    // ---- 異常終了のあとの、使い捨てプロファイルと孤児のChromeの回収 ----
+
+    /** @return list<int> 引数「--user-data-dir=DIR」が、完全に一致するプロセス */
+    private function chromeOf(string $dir): array
+    {
+        $out = [];
+        foreach (glob('/proc/[0-9]*/cmdline') ?: [] as $f) {
+            $c = @file_get_contents($f);
+            if (is_string($c) && in_array('--user-data-dir='.$dir, explode("\0", rtrim($c, "\0")), true)) {
+                $pid = (int) basename(dirname($f));
+                \App\Support\ProcessInfo::isAlive($pid) && $out[] = $pid;
+            }
+        }
+
+        return $out;
+    }
+
+    public function test_親が強制終了されて孤児になったChromeと使い捨てプロファイルを_recoverが回収する(): void
+    {
+        $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
+        if ($chrome === null || ! is_dir('/proc')) {
+            $this->markTestSkipped('ChromeまたはLinuxがありません');
+        }
+        $this->engine();
+        $child = proc_open([PHP_BINARY, __DIR__.'/../Support/chrome_orphan.php', $this->dir, $chrome], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        $dir = trim((string) fgets($pipes[1]));
+        $cpid = proc_get_status($child)['pid'];
+        try {
+            $this->assertStringStartsWith($this->dir.'/profiles/profile-', $dir);
+            $this->assertNotEmpty($this->chromeOf($dir), 'Chromeが起動していない');
+            $this->assertContains($dir, array_column($this->engine()->store->profiles(), 'dir'), 'プロファイルが記録されていない');
+            posix_kill($cpid, SIGKILL); // 親のPHPが、強制終了される
+            usleep(800000);
+            $this->assertNotEmpty($this->chromeOf($dir), '親を失った Chrome が残っているはず（孤児）');
+            $this->assertDirectoryExists($dir);
+
+            $this->assertSame(0, Artisan::call('nlrpa:recover'));
+            $this->assertEmpty($this->chromeOf($dir), '孤児のChromeが回収されていない');
+            $this->assertDirectoryDoesNotExist($dir);
+            $this->assertSame([], $this->engine()->store->profiles());
+        } finally {
+            foreach ($this->chromeOf($dir) as $p) {
+                @posix_kill($p, SIGKILL);
+            }
+            @proc_terminate($child, 9);
+            @proc_close($child);
+        }
+    }
+
+    public function test_回収は置き場の外や形の違うディレクトリには触らない(): void
+    {
+        $this->engine();
+        $victim = sys_get_temp_dir().'/nlrpa_victim_'.bin2hex(random_bytes(3));
+        mkdir($victim);
+        file_put_contents($victim.'/keep.txt', 'x');
+        $root = $this->engine()->profileRoot();
+        mkdir($root, 0700, true);
+        mkdir($root.'/other-dir');           // 「profile-」で始まらない
+        mkdir($root.'/profile-ok');          // 回収の対象
+        mkdir($root.'/profile-ok/nested');   // 深さ
+        try {
+            $r = \App\Support\ProfileCleaner::clean($root, [$victim, $root.'/../'.basename($victim), $root.'/other-dir', $root.'/profile-ok/nested', $root.'/profile-ok', '/etc', '']);
+            $this->assertFileExists($victim.'/keep.txt', '置き場の外を消してしまった');
+            $this->assertDirectoryExists($root.'/other-dir');
+            $this->assertSame(1, $r['dirs']);
+            $this->assertCount(6, $r['skipped']);
+            $this->assertDirectoryDoesNotExist($root.'/profile-ok');
+        } finally {
+            @unlink($victim.'/keep.txt');
+            @rmdir($victim);
+        }
+    }
 }
