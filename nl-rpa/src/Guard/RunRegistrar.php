@@ -171,7 +171,7 @@ final class RunRegistrar
                 $reasons[] = "{$n}行目: 業務キーが不正です（{$kp}）";
             } else {
                 $folded = BusinessKey::fold($key);
-                isset($seen[$folded]) && $reasons[] = "{$n}行目: 業務キーが重複しています（大文字小文字の違いも同じとみなします）";
+                isset($seen[$folded]) && $reasons[] = "{$n}行目: 業務キーが重複しています";
                 $seen[$folded] = true;
             }
             $rowRecords[] = (object) ['business_key' => $key, 'values_hash' => self::rowHash($row)];

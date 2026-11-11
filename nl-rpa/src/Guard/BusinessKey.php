@@ -8,7 +8,7 @@ namespace Src\Guard;
  * 業務キー（9-4）。表記の違い（全角半角、前後の空白、ゼロ幅の文字など）で、同じ相手への二重実行を見逃さないための規則。
  *  - NFKC正規化しても変わらない文字列だけを認める（全角の英数字などは不可）
  *  - 空白（Unicodeの空白類を含む）、制御・書式・未割り当ての文字は不可
- *  - 比較と保存は、大文字小文字を区別しない形（fold）で行う（区別するかは、仕様で未定。安全側＝同じものとして扱う）
+ *  - 大文字小文字は区別する（`K-001` と `k-001` は別の業務キー。利用者に確認済み）
  */
 final class BusinessKey
 {
@@ -33,9 +33,12 @@ final class BusinessKey
         return null;
     }
 
-    /** 保存・比較に使う形 */
+    /**
+     * 保存・比較に使う形。problem() を通ったキーは、すでに正規化済みなので、そのまま返す。
+     * 保存・比較の入り口を1か所にしておくため、関数として残している。
+     */
     public static function fold(string $key): string
     {
-        return mb_strtolower($key, 'UTF-8');
+        return $key;
     }
 }

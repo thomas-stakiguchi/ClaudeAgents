@@ -674,14 +674,20 @@ class GuardTest extends TestCase
             $rows = [['商品コード' => 'A', '数量' => '1', '伝票番号' => $k]];
             $this->assertNotSame([], $this->register("RUN-K{$i}", $rows), json_encode($k));
         }
-        // 大文字小文字だけが違うキーは、同じものとして重複扱い
-        $rows = [['商品コード' => 'A', '数量' => '1', '伝票番号' => 'K-001'], ['商品コード' => 'B', '数量' => '1', '伝票番号' => 'k-001']];
+        // 完全に同じキーは、重複
+        $rows = [['商品コード' => 'A', '数量' => '1', '伝票番号' => 'K-001'], ['商品コード' => 'B', '数量' => '1', '伝票番号' => 'K-001']];
         $this->assertNotSame([], $this->register('RUN-K99', $rows));
+        // 大文字小文字だけが違うキーは、別の業務キー（区別する）
+        $rows = [['商品コード' => 'A', '数量' => '1', '伝票番号' => 'K-001'], ['商品コード' => 'B', '数量' => '1', '伝票番号' => 'k-001']];
+        $this->assertSame([], $this->register('RUN-K100', $rows));
     }
 
-    public function test_大文字小文字だけ違う業務キーでも状態は同じ扱い(): void
+    public function test_大文字小文字だけ違う業務キーは状態も別扱い(): void
     {
         $this->states->markProcessing('K-001', 'S-003', 'h', 'r');
+        $this->assertSame('processing', $this->states->get('K-001', 'S-003'));
+        $this->assertNull($this->states->get('k-001', 'S-003'));
+        $this->states->markProcessing('k-001', 'S-003', 'h', 'r'); // 別のキーなので、未解消にならない
         $this->assertSame('processing', $this->states->get('k-001', 'S-003'));
     }
 
