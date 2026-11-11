@@ -17,8 +17,11 @@ final class StrictJson
     {
     }
 
-    public static function decode(string $json, int $maxDepth = 64): mixed
+    public static function decode(string $json, int $maxDepth = 64, int $maxBytes = 1_048_576): mixed
     {
+        if (strlen($json) > $maxBytes) {
+            throw new \InvalidArgumentException("JSONが大きすぎます（上限{$maxBytes}バイト）");
+        }
         if (! mb_check_encoding($json, 'UTF-8')) {
             throw new \InvalidArgumentException('UTF-8として不正です');
         }
@@ -88,6 +91,9 @@ final class StrictJson
                 throw $this->err('キーは文字列にしてください');
             }
             $k = $this->str();
+            if (str_contains($k, "\0")) {
+                throw $this->err('キーにNUL文字は使えません');
+            }
             if (isset($seen[$k])) {
                 throw $this->err("キーが重複しています: {$k}");
             }

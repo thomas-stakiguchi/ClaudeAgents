@@ -193,4 +193,145 @@ class PlanValidatorTest extends TestCase
         }
         $this->assertFalse($policy->isReversible((object) []));
     }
+
+    // ---- Opusレビュー（A〜K）の再現入力 ----
+
+    public function test_必須項目にnullを入れても検査をすり抜けない(): void
+    {
+        $paths = [
+            fn (\stdClass $p) => $p->steps[1]->steps[2]->id = null,
+            fn (\stdClass $p) => $p->limits = null,
+            fn (\stdClass $p) => $p->steps[0]->verify = null,
+            fn (\stdClass $p) => $p->steps = null,
+            fn (\stdClass $p) => $p->steps[1]->steps = null,
+            fn (\stdClass $p) => $p->plan_id = null,
+            fn (\stdClass $p) => $p->version = null,
+            fn (\stdClass $p) => $p->scenario_id = null,
+            fn (\stdClass $p) => $p->input->columns[0]->name = null,
+        ];
+        foreach ($paths as $i => $mutate) {
+            $p = $this->base();
+            $mutate($p);
+            $this->assertNotSame([], PlanValidator::validate($p), "case {$i} が受理された");
+        }
+    }
+
+    public function test_idがなくても取り消せない手順の一覧から消えない(): void
+    {
+        $p = $this->base();
+        $p->steps[1]->steps[2]->id = null;
+        $this->assertContains('(idなし)', (new OperationPolicy())->irreversibleStepIds($p));
+    }
+
+    public function test_OKする確認ダイアログは取り消せないしその並びのclickも取り消せない(): void
+    {
+        $p = $this->base();
+        $p->steps[1]->steps[] = StrictJson::decode('{"id":"S-010","action":"on_dialog","source":null,"dialog_text":"登録しますか","response":"ok"}');
+        $policy = new OperationPolicy(
+            registeredButtons: ['submit_button' => true],
+            registeredAutosaveFreeInputs: ['item_code' => true, 'quantity' => true],
+            registeredUrls: ['login_page' => true],
+        );
+        $this->assertSame(['S-005', 'S-010'], $policy->irreversibleStepIds($p));
+        // stop なら、取り消せる
+        $p->steps[1]->steps[4]->response = 'stop';
+        $this->assertSame([], $policy->irreversibleStepIds($p));
+    }
+
+    public function test_件数の上限は登録の有無にかかわらず取り消せない候補があれば必須(): void
+    {
+        foreach (['type_text', 'open_url', 'login'] as $action) {
+            $p = StrictJson::decode(StubAiClient::defaultPlanJson());
+            $p->steps = [StrictJson::decode('{"id":"S-001","action":"'.$action.'","target":"t","value":"v","source":null,"verify":{"type":"text_visible","value":"x"}}')];
+            if ($action !== 'type_text') {
+                unset($p->steps[0]->value);
+            }
+            unset($p->limits->max_rows_per_run);
+            $this->assertHasError(PlanValidator::validate($p), '件数の上限');
+        }
+    }
+
+    public function test_組織の最大値を超える上限は拒否(): void
+    {
+        $p = $this->base();
+        $p->limits->max_rows_per_run = 1000;
+        $this->assertSame([], PlanValidator::validate($p));
+        $this->assertHasError(PlanValidator::validate($p, 500), '組織全体の最大値');
+    }
+
+    public function test_業務キー列はrequired_trueが必須(): void
+    {
+        $p = $this->base();
+        $p->input->columns[2]->required = false;
+        $this->assertHasError(PlanValidator::validate($p), 'required:true');
+    }
+
+    public function test_固定値や要素名の制御文字を拒否(): void
+    {
+        foreach (["abc\n", "a\tb", "a\0b", "a\x7fb", "\u{202e}abc"] as $bad) {
+            $p = $this->base();
+            $p->steps[1]->steps[0] = StrictJson::decode('{"id":"S-003","action":"type_text","target":"item_code","value":"x","source":null,"verify":{"type":"text_visible","value":"x"}}');
+            $p->steps[1]->steps[0]->value = $bad;
+            $this->assertNotSame([], PlanValidator::validate($p), json_encode($bad));
+        }
+    }
+
+    public function test_列はfor_each_rowの外では使えない(): void
+    {
+        $p = $this->base();
+        $p->steps[] = StrictJson::decode('{"id":"S-060","action":"type_text","target":"item_code","column":"伝票番号","source":null,"verify":{"type":"text_visible","value":"x"}}');
+        $this->assertHasError(PlanValidator::validate($p), 'for_each_row の中');
+    }
+
+    public function test_ゲートはreversibleを捨てる(): void
+    {
+        $p = $this->base();
+        $p->steps[1]->steps[2]->reversible = true;
+        $r = AiPlanGate::accept(json_encode($p, JSON_UNESCAPED_UNICODE));
+        $this->assertSame([], $r['errors']);
+        $this->assertFalse(property_exists($r['plan']->steps[1]->steps[2], 'reversible'));
+    }
+
+    public function test_ゲートはシナリオにない根拠を補ったことにする(): void
+    {
+        $scenario = '発注管理システムにログインする。商品コード・数量・納品日を入力する。';
+        $r = AiPlanGate::accept(StubAiClient::defaultPlanJson(), scenario: $scenario);
+        $this->assertSame([], $r['errors']);
+        $steps = $r['plan']->steps;
+        $this->assertSame('発注管理システムにログインする。', $steps[0]->source);
+        $this->assertSame('商品コード・数量・納品日を入力する。', $steps[1]->steps[0]->source);
+        $this->assertNull($steps[1]->steps[2]->source, '登録ボタンの文はシナリオにないので補った扱い');
+    }
+
+    public function test_ゲートは人の列定義と違えば拒否(): void
+    {
+        $cols = [
+            '商品コード' => ['type' => 'text', 'required' => true],
+            '数量' => ['type' => 'number', 'role' => 'quantity', 'required' => true],
+            '伝票番号' => ['type' => 'text', 'role' => 'business_key', 'required' => true],
+        ];
+        $this->assertSame([], AiPlanGate::accept(StubAiClient::defaultPlanJson(), expectedColumns: $cols)['errors']);
+        $bad = $cols;
+        $bad['数量']['role'] = 'amount';
+        $this->assertNotSame([], AiPlanGate::accept(StubAiClient::defaultPlanJson(), expectedColumns: $bad)['errors']);
+        $bad = $cols;
+        unset($bad['商品コード']);
+        $this->assertNotSame([], AiPlanGate::accept(StubAiClient::defaultPlanJson(), expectedColumns: $bad)['errors']);
+    }
+
+    public function test_ゲートは画面の記録にない要素名を拒否(): void
+    {
+        $ok = ['login_page', 'item_code', 'quantity', 'submit_button', 'order_number'];
+        $this->assertSame([], AiPlanGate::accept(StubAiClient::defaultPlanJson(), elementNames: $ok)['errors']);
+        $this->assertNotSame([], AiPlanGate::accept(StubAiClient::defaultPlanJson(), elementNames: ['login_page'])['errors']);
+    }
+
+    public function test_NULキーなどでも例外が門の外へ漏れない(): void
+    {
+        foreach (['{"\u0000a":1}', '{"a":"\u0000"}', str_repeat(' ', AiPlanGate::MAX_BYTES + 1)] as $bad) {
+            $r = AiPlanGate::accept($bad);
+            $this->assertNull($r['plan']);
+            $this->assertNotSame([], $r['errors']);
+        }
+    }
 }

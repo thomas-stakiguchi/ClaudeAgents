@@ -40,3 +40,20 @@
 
 ## 照合ルール（rule）
 `width`（full／half）、`date_format`（文字列）、`thousand_separator`（真偽）、`trim`（真偽）、`max_length`（整数）。すべて任意。
+
+## AI出力の門（`AiPlanGate`）の決め事
+- AIが書いた `plan_hash`、`reversible` は捨てる
+- 必須の項目は、`null` を認めない（`source` だけ null 可。null は「AIが補った」の意味）
+- 文字列は、制御文字（改行・タブを含む）、NUL、向きを変える文字（U+202Eなど）を拒否する
+- 入力データの列（`column`）は、for_each_row の中でだけ使える
+- 件数の上限は、読み取り・待ち・結果の記録以外が1つでもあれば必須（取り消し判定より広く取る）
+- OKする確認ダイアログ（on_dialog の response=ok）は、取り消せない。同じ並びの click も、取り消せない扱い（7-1）
+- 呼び出し側が渡せば、次も照合する：シナリオ（根拠の文）、人が定義した列、画面の記録の要素名、組織の件数の最大値
+
+## 未確定（次に決める）
+- 手順の「接続先（種類と名前）」の欄（8-1）。7-1-1・SEC-8・14-7を強制するために必要。OperationPolicy も接続先ごとの登録に変える
+- 読み返し照合する項目の欄（9-3）。今は verify の中だけ
+- `verify.value` の意味（列名か固定値か）。今のスタブは列名を書いている
+- press_key の「押すキー」の欄
+- `created_by_ai`、`allowlist_versions`、`screen_record_version`、`plan_id` などの自己申告は、計画を作る処理（app側）が実行エンジンの値で上書きする。ゲートはまだ上書きしない
+- `unresolved`（未確定）をAIが書かずに隠すことは、決定的な検査では防げない。承認画面で補う（方法は未定）

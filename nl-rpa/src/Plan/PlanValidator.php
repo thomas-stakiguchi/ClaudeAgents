@@ -25,10 +25,14 @@ final class PlanValidator
     /** @var array<string,true> */
     private array $columns = [];
 
+    /** @var int|null 組織全体の件数の最大値（SEC-14）。指定があれば、超える上限は拒否 */
+    private ?int $orgMaxRows = null;
+
     /** @return list<string> */
-    public static function validate(mixed $plan): array
+    public static function validate(mixed $plan, ?int $orgMaxRows = null): array
     {
         $v = new self();
+        $v->orgMaxRows = $orgMaxRows;
         $v->plan($plan);
 
         return $v->errors;
@@ -57,6 +61,8 @@ final class PlanValidator
         foreach ($required as $r) {
             if (! in_array($r, $keys, true)) {
                 $this->e($path, "必須の項目がありません: {$r}");
+            } elseif ($v->{$r} === null && $r !== 'source') {
+                $this->e($path, "必須の項目に null は使えません: {$r}");
             }
         }
         foreach ($keys as $k) {
@@ -70,8 +76,9 @@ final class PlanValidator
 
     private function str(mixed $v, string $path, ?string $pattern = null, bool $nonEmpty = true): bool
     {
-        if (! is_string($v) || ($nonEmpty && $v === '') || ($pattern !== null && ! preg_match($pattern, $v))) {
-            $this->e($path, '文字列の形式が正しくありません');
+        if (! is_string($v) || ($nonEmpty && $v === '') || ($pattern !== null && ! preg_match($pattern, $v))
+            || preg_match('/[\x00-\x1f\x7f\x{202a}-\x{202e}\x{2066}-\x{2069}]/u', $v)) {
+            $this->e($path, '文字列の形式が正しくありません（空、制御文字、改行・タブ、向きを変える文字は使えません）');
 
             return false;
         }
@@ -160,6 +167,7 @@ final class PlanValidator
                     $this->e("{$path}.role", '知らない役割です');
                 } elseif ($c->role === 'business_key') {
                     $keyCount++;
+                    ($c->required ?? null) !== true && $this->e("{$path}.required", '業務キー列は required:true にしてください（R8）');
                 }
             }
         }
@@ -168,18 +176,26 @@ final class PlanValidator
 
     private function limits(mixed $l, bool $needRows): void
     {
-        $o = $this->obj($l, '$.limits', [], ['max_rows_per_run', 'max_quantity_per_run']);
+        $o = $this->obj($l, '$.limits', [], ['max_rows_per_run', 'max_quantity_per_run', 'max_amount_per_run']);
         if ($o === null) {
             return;
         }
-        property_exists($o, 'max_rows_per_run') && $this->posInt($o->max_rows_per_run, '$.limits.max_rows_per_run');
+        if (property_exists($o, 'max_rows_per_run') && $this->posInt($o->max_rows_per_run, '$.limits.max_rows_per_run')
+            && $this->orgMaxRows !== null && $o->max_rows_per_run > $this->orgMaxRows) {
+            $this->e('$.limits.max_rows_per_run', "組織全体の最大値（{$this->orgMaxRows}）を超えています（SEC-14）");
+        }
         property_exists($o, 'max_quantity_per_run') && $this->posInt($o->max_quantity_per_run, '$.limits.max_quantity_per_run');
+        property_exists($o, 'max_amount_per_run') && $this->posInt($o->max_amount_per_run, '$.limits.max_amount_per_run');
         if ($needRows && ! property_exists($o, 'max_rows_per_run')) {
             $this->e('$.limits.max_rows_per_run', '取り消せない操作がありうる計画では、件数の上限が必須です（R9）');
         }
     }
 
-    /** 件数の上限が要るかの、安全側の判定（実際の取り消し可否は OperationPolicy が決める） */
+    /**
+     * 件数の上限が要るかの、安全側の判定。
+     * 画面の読み取り・待ち・結果の記録以外は、登録の有無にかかわらず、すべて対象にする
+     * （実際の取り消し可否は OperationPolicy が決める。ここは、それより広く取る）。
+     */
     private function hasIrreversibleCandidate(array $steps): bool
     {
         foreach ($steps as $s) {
@@ -187,7 +203,10 @@ final class PlanValidator
                 continue;
             }
             $a = $s->action ?? null;
-            if (in_array($a, ['click', 'press_key', 'confirm_dialog'], true)) {
+            if (is_string($a) && ! in_array($a, ['read_text', 'wait_for', 'write_result', 'for_each_row', 'if'], true)) {
+                return true;
+            }
+            if ($a !== null && ! is_string($a)) {
                 return true;
             }
             foreach (['steps', 'then', 'else'] as $k) {
@@ -280,11 +299,11 @@ final class PlanValidator
                 isset($o->response) && ! in_array($o->response, ['ok', 'stop'], true) && $this->e("{$path}.response", 'ok か stop にしてください');
                 break;
             default:
-                $this->action($o, $action, $path);
+                $this->action($o, $action, $path, $inLoop);
         }
     }
 
-    private function action(\stdClass $o, string $action, string $path): void
+    private function action(\stdClass $o, string $action, string $path, bool $inLoop): void
     {
         property_exists($o, 'target') && $this->str($o->target, "{$path}.target");
         $hasValue = property_exists($o, 'value');
@@ -294,8 +313,9 @@ final class PlanValidator
                 $this->e($path, 'value（固定値）か column（入力データの列）の、どちらか一方だけを指定してください');
             }
             $hasValue && $this->str($o->value, "{$path}.value", null, false);
-            if ($hasColumn && $this->str($o->column, "{$path}.column") && ! isset($this->columns[$o->column])) {
-                $this->e("{$path}.column", "列定義にない列です: {$o->column}");
+            if ($hasColumn && $this->str($o->column, "{$path}.column")) {
+                ! isset($this->columns[$o->column]) && $this->e("{$path}.column", "列定義にない列です: {$o->column}");
+                ! $inLoop && $this->e("{$path}.column", '入力データの列は、for_each_row の中でだけ使えます');
             }
         }
         if ($action === 'wait_for') {

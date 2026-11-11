@@ -40,6 +40,7 @@ final class OperationPolicy
 
         return match ($action) {
             'read_text', 'wait_for', 'write_result' => true,
+            'on_dialog' => ($step->response ?? null) === 'stop', // OKする確認ダイアログは、取り消せない（7-1、A-2）
             'open_url' => is_string($target) && isset($this->registeredUrls[$target]),
             'type_text', 'clear_text' => is_string($target) && isset($this->registeredAutosaveFreeInputs[$target]),
             'click' => is_string($target) && isset($this->registeredButtons[$target]),
@@ -61,22 +62,37 @@ final class OperationPolicy
         return $ids;
     }
 
-    /** @param array<mixed> $steps @param list<string> $ids */
+    /**
+     * @param array<mixed> $steps
+     * @param list<string> $ids
+     */
     private function walk(array $steps, array &$ids): void
     {
+        // 同じ並びの中に「OKする確認ダイアログ」があれば、その並びのclickは、最初のボタンから取り消せない扱いにする（7-1）
+        $hasOkDialog = false;
+        foreach ($steps as $s) {
+            if ($s instanceof \stdClass && ($s->action ?? null) === 'on_dialog' && ($s->response ?? null) !== 'stop') {
+                $hasOkDialog = true;
+            }
+        }
         foreach ($steps as $s) {
             if (! $s instanceof \stdClass) {
+                $ids[] = '(手順ではない値)';
                 continue;
             }
             $a = $s->action ?? null;
-            if (in_array($a, ['for_each_row', 'if', 'on_dialog'], true)) {
+            if (in_array($a, ['for_each_row', 'if'], true)) {
                 foreach (['steps', 'then', 'else'] as $k) {
-                    isset($s->{$k}) && is_array($s->{$k}) && $this->walk($s->{$k}, $ids);
+                    if (isset($s->{$k})) {
+                        is_array($s->{$k}) ? $this->walk($s->{$k}, $ids) : $ids[] = '(手順の並びではない値)';
+                    }
                 }
                 continue;
             }
-            if (! $this->isReversible($s) && isset($s->id) && is_string($s->id)) {
-                $ids[] = $s->id;
+            $irreversible = ! $this->isReversible($s) || ($hasOkDialog && $a === 'click');
+            if ($irreversible) {
+                // idがなくても、取り消せない手順の一覧から消さない
+                $ids[] = isset($s->id) && is_string($s->id) ? $s->id : '(idなし)';
             }
         }
     }
