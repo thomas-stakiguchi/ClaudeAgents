@@ -1,0 +1,73 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Support\Engine;
+use Illuminate\Console\Command;
+use Src\Policy\StubRegistrations;
+
+/**
+ * ワーカー（14-3の2・3）。担当者が、コンソールで起動する。実行要求の「番号だけ」を受け取り、
+ * 保存先から内容を読んで、12-1の検査をすべて src/ で行ってから実行する。画面からは、起動しない。
+ */
+class NlrpaWorker extends Command
+{
+    protected $signature = 'nlrpa:worker {request : 実行要求の番号}';
+
+    protected $description = '実行要求（ドライラン・実行）を、1件処理する';
+
+    public function handle(Engine $e): int
+    {
+        $arg = (string) $this->argument('request');
+        if (! preg_match('/\A[0-9]{1,12}\z/', $arg)) {
+            $this->error('要求の番号は、数字で指定してください');
+
+            return self::FAILURE;
+        }
+        $id = (int) $arg;
+        $req = $e->store->getRequest($id);
+        if ($req === null) {
+            $this->error('その番号の要求はありません');
+
+            return self::FAILURE;
+        }
+        if (! $e->store->claimRequest($id)) {
+            $this->error('この要求は、すでに実行中か、完了しています');
+
+            return self::FAILURE;
+        }
+        $pid = getmypid();
+        $e->store->registerWorker($pid, $id);
+        $result = ['status' => 'aborted', 'reasons' => ['ワーカーが異常終了しました']];
+        try {
+            if ($req['kind'] === 'run') {
+                $run = $e->store->getRun((string) $req['run_id']) ?? throw new \RuntimeException('実行の登録がありません');
+                $planHash = (string) $run['plan_hash'];
+                $set = $e->store->getInputSet((int) $run['input_set_id']) ?? throw new \RuntimeException('入力データがありません');
+                $rows = $set['rows'];
+            } else {
+                $planHash = (string) $req['plan_hash'];
+                $rows = $req['input_set_id'] !== null
+                    ? ($e->store->getInputSet((int) $req['input_set_id'])['rows'] ?? throw new \RuntimeException('入力データがありません'))
+                    : StubRegistrations::dummyRows();
+            }
+            $p = $e->store->getPlan($planHash) ?? throw new \RuntimeException('計画がありません');
+            $runner = $e->newRunner($e->newBrowser());
+            $report = $req['kind'] === 'run'
+                ? $runner->run($p['plan'], $p['inputs'], (string) $req['run_id'], $rows)
+                : $runner->dryRun($p['plan'], $p['inputs'], $rows, (string) $req['dry_run_id']);
+            $result = ['status' => $report->status, 'reasons' => $report->reasons, 'rows' => $report->rows];
+        } catch (\Throwable $t) {
+            $result = ['status' => 'aborted', 'reasons' => ['例外: '.$t->getMessage()]];
+        } finally {
+            $e->store->finishRequest($id, $result);
+            $e->store->unregisterWorker($pid);
+        }
+        $this->line('結果：'.$result['status']);
+        foreach ($result['reasons'] as $r) {
+            $this->line('  '.$r);
+        }
+
+        return in_array($result['status'], ['completed', 'awaiting_first_row_confirmation'], true) ? self::SUCCESS : self::FAILURE;
+    }
+}

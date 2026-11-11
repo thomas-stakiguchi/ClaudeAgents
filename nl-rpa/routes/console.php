@@ -1,8 +1,3 @@
 <?php
 
-use Illuminate\Foundation\Inspiring;
-use Illuminate\Support\Facades\Artisan;
-
-Artisan::command('inspire', function () {
-    $this->comment(Inspiring::quote());
-})->purpose('Display an inspiring quote');
+// Artisanコマンドは、app/Console/Commands に置く（nlrpa:serve、nlrpa:worker、nlrpa:recover、nlrpa:emergency-stop、nlrpa:kill-switch）

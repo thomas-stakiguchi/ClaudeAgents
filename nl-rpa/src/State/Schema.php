@@ -41,5 +41,50 @@ final class Schema
             value INTEGER NOT NULL
         )');
         $pdo->exec("CREATE TRIGGER IF NOT EXISTS flags_no_delete BEFORE DELETE ON flags BEGIN SELECT RAISE(ABORT, 'flagsは削除できません'); END");
+
+        // 画面とワーカーが使う表（計画、入力データ、実行、実行要求、ワーカー）。承認・状態の正本は、上の ledger と step_states
+        $pdo->exec('CREATE TABLE IF NOT EXISTS plans (
+            hash TEXT PRIMARY KEY,
+            plan_json TEXT NOT NULL,
+            inputs_json TEXT NOT NULL,
+            scenario TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            os_user TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS input_sets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sha256 TEXT NOT NULL,
+            rows_json TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS runs (
+            run_id TEXT PRIMARY KEY,
+            plan_hash TEXT NOT NULL REFERENCES plans(hash),
+            input_set_id INTEGER NOT NULL REFERENCES input_sets(id),
+            dry_run_id TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )');
+        $pdo->exec("CREATE TABLE IF NOT EXISTS requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL CHECK (kind IN ('dry_run','run')),
+            plan_hash TEXT NOT NULL REFERENCES plans(hash),
+            input_set_id INTEGER REFERENCES input_sets(id),
+            run_id TEXT,
+            dry_run_id TEXT,
+            status TEXT NOT NULL CHECK (status IN ('queued','running','done')),
+            result_json TEXT,
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT
+        )");
+        $pdo->exec('CREATE TABLE IF NOT EXISTS workers (
+            pid INTEGER PRIMARY KEY,
+            request_id INTEGER NOT NULL,
+            started_at TEXT NOT NULL
+        )');
     }
 }

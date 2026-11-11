@@ -42,7 +42,13 @@ final class PlanRunner
     /** 初回の1件の確認（人が、結果を確認したあとに記録する。5章の9） */
     public function confirmFirstRow(string $runId, string $by, string $osUser): void
     {
-        $this->ledger->append('first_row_confirmed', $runId, (object) ['by' => $by, 'os_user' => $osUser]);
+        self::recordFirstRowConfirmation($this->ledger, $runId, $by, $osUser);
+    }
+
+    /** 画面からも、同じ形で記録する（確認者の名前とOSのユーザー名の両方。LOC-3） */
+    public static function recordFirstRowConfirmation(Ledger $ledger, string $runId, string $by, string $osUser): void
+    {
+        $ledger->append('first_row_confirmed', $runId, (object) ['by' => $by, 'os_user' => $osUser]);
     }
 
     /**

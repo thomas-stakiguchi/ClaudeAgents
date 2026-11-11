@@ -77,4 +77,36 @@ class ArchitectureTest extends TestCase
             $this->assertStringNotContainsString('Closure::bind', $code, $file);
         }
     }
+
+    public function test_画面からシェルやプロセスを起動しない(): void
+    {
+        // 14-3の3：画面から、シェルのコマンドを組み立てて起動しない。ワーカーは、担当者がコンソールで起動する
+        $root = dirname(__DIR__, 2);
+        foreach ($this->phpFiles($root.'/app/Http') as $file) {
+            $code = file_get_contents($file);
+            $this->assertDoesNotMatchRegularExpression('/\b(exec|shell_exec|system|passthru|proc_open|popen|pcntl_exec)\s*\(/', $code, $file);
+            $this->assertStringNotContainsString('Artisan::call', $code, $file);
+            $this->assertStringNotContainsString('Symfony\\Component\\Process', $code, $file);
+            $this->assertStringNotContainsString('Process::', $code, $file);
+        }
+    }
+
+    public function test_画面にインラインのスクリプトやスタイルや外部の読み込みがない(): void
+    {
+        // CSPで禁止している（LOC-2）。外部のJavaScriptライブラリは、必要になるまで入れない
+        foreach ($this->phpFiles(dirname(__DIR__, 2).'/resources/views') as $file) {
+            $code = file_get_contents($file);
+            $this->assertDoesNotMatchRegularExpression('/<script|style=|onclick=|onload=|javascript:|https?:\/\//i', $code, $file);
+        }
+        foreach (glob(dirname(__DIR__, 2).'/resources/views/**/*.blade.php') ?: [] as $f) {
+            $this->assertDoesNotMatchRegularExpression('/<script|style=|https?:\/\//i', file_get_contents($f), $f);
+        }
+    }
+
+    public function test_画面で値をエスケープなしで出さない(): void
+    {
+        foreach ($this->phpFiles(dirname(__DIR__, 2).'/resources/views') as $file) {
+            $this->assertStringNotContainsString('{!!', file_get_contents($file), $file);
+        }
+    }
 }

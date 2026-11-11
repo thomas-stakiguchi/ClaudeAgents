@@ -46,6 +46,33 @@ final class RunRegistrar
         return $m[1] === '-' ? -$n : $n;
     }
 
+    /**
+     * 実行前のプレビュー用の集計（R7、5章の9）。数量・金額は、小数4桁までの固定小数で数え、文字列で返す。
+     * 数値でない値は、集計に入れない（検査は register が行う）。
+     *
+     * @param array<mixed> $rows
+     * @return array{rows:int, quantity:string, amount:string}
+     */
+    public static function summarize(\stdClass $plan, array $rows): array
+    {
+        $qtyCol = $amtCol = null;
+        foreach ($plan->input->columns as $c) {
+            ($c->role ?? null) === 'quantity' && $qtyCol = $c->name;
+            ($c->role ?? null) === 'amount' && $amtCol = $c->name;
+        }
+        $q = $a = 0;
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $qtyCol !== null && is_string($row[$qtyCol] ?? null) && ($n = self::parseDecimal($row[$qtyCol], false)) !== null && $q += $n;
+            $amtCol !== null && is_string($row[$amtCol] ?? null) && ($n = self::parseDecimal($row[$amtCol], false)) !== null && $a += $n;
+        }
+        $fmt = static fn (int $n): string => rtrim(rtrim(sprintf('%d.%04d', intdiv($n, self::SCALE), $n % self::SCALE), '0'), '.');
+
+        return ['rows' => count($rows), 'quantity' => $qtyCol === null ? '（数量の列なし）' : $fmt($q), 'amount' => $amtCol === null ? '（金額の列なし）' : $fmt($a)];
+    }
+
     /** 列の型の検査（付録A-4）。問題があれば、理由 */
     private static function typeProblem(\stdClass $c, string $v): ?string
     {
