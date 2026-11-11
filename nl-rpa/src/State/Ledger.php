@@ -56,6 +56,19 @@ final class Ledger
         return $r ? json_decode((string) $r['payload'], false, 512, JSON_THROW_ON_ERROR) : null;
     }
 
+    /**
+     * 同じ種類の記録の、subject ごとの最新を返す（古い順）。実行の登録（run）の一覧などに使う。
+     *
+     * @return list<array{subject:string, payload:\stdClass}>
+     */
+    public function latestPerSubject(string $kind): array
+    {
+        $st = $this->db->pdo->prepare('SELECT subject, payload FROM ledger WHERE kind = ? AND seq IN (SELECT max(seq) FROM ledger WHERE kind = ? GROUP BY subject) ORDER BY seq');
+        $st->execute([$kind, $kind]);
+
+        return array_map(static fn (array $r): array => ['subject' => (string) $r['subject'], 'payload' => json_decode((string) $r['payload'], false, 512, JSON_THROW_ON_ERROR)], $st->fetchAll());
+    }
+
     /** 最新の1件を、連番つきで返す。なければ null */
     public function latestWithSeq(string $kind, string $subject): ?array
     {

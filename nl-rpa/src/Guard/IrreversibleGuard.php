@@ -207,9 +207,22 @@ final class IrreversibleGuard
         // 初回の1件：この実行で、すでに別の行に手を付けているなら、その初回の1件が成功し、確認されていること
         $gate = new FirstRowGate($this->ledger, $this->states);
         $rowsRec = is_array($run->rows ?? null) ? $run->rows : [];
-        $others = array_values(array_diff($gate->executedKeys($r->runId, $rowsRec, $r->stepId), [$r->businessKey]));
-        if ($others !== [] && ! $gate->isConfirmed($r->runId, $rowsRec, $r->stepId)) {
+        $irrIds = $policy->irreversibleStepIds($plan);
+        $others = array_values(array_diff($gate->executedKeys($r->runId, $rowsRec, $irrIds), [$r->businessKey]));
+        if ($others !== [] && ! $gate->isConfirmed($r->runId, $rowsRec, $irrIds)) {
             $reasons[] = '初回の1件の確認が済んでいません（この実行で先に実行した行が、成功し、確認されるまで、次へ進めません）';
+        }
+        // 同じ計画の、ほかの実行が、初回の1件の確認待ちなら、新しい実行で、確認なしに1行ずつ進めない
+        foreach ($this->ledger->latestPerSubject('run') as $other) {
+            if ($other['subject'] === $r->runId) {
+                continue;
+            }
+            $o = $other['payload'];
+            if (($o->plan_hash ?? null) === $hash && is_array($o->rows ?? null)
+                && $gate->awaitingConfirmation($other['subject'], $o->rows, $irrIds)) {
+                $reasons[] = "別の実行（{$other['subject']}）の初回の1件が、確認されていません。先に確認してください";
+                break;
+            }
         }
 
         if ($reasons !== []) {

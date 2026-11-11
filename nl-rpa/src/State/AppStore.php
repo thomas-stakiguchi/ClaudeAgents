@@ -200,10 +200,11 @@ final class AppStore
         return $st->fetchAll();
     }
 
-    public function registerWorker(int $pid, int $requestId): void
+    /** @param string|null $procStart プロセスの開始時刻（/proc の starttime）。緊急停止が、PIDの再利用を見分けるのに使う */
+    public function registerWorker(int $pid, int $requestId, ?string $procStart = null): void
     {
-        $st = $this->db->pdo->prepare('INSERT OR REPLACE INTO workers (pid, request_id, started_at) VALUES (?,?,?)');
-        $st->execute([$pid, $requestId, ($this->clock)()]);
+        $st = $this->db->pdo->prepare('INSERT OR REPLACE INTO workers (pid, request_id, started_at, proc_start) VALUES (?,?,?,?)');
+        $st->execute([$pid, $requestId, ($this->clock)(), $procStart]);
     }
 
     public function unregisterWorker(int $pid): void
@@ -212,11 +213,11 @@ final class AppStore
         $st->execute([$pid]);
     }
 
-    /** @return list<array{pid:int, request_id:int, started_at:string}> */
+    /** @return list<array{pid:int, request_id:int, started_at:string, proc_start:string|null}> */
     public function workers(): array
     {
         return array_map(
-            static fn (array $r): array => ['pid' => (int) $r['pid'], 'request_id' => (int) $r['request_id'], 'started_at' => $r['started_at']],
+            static fn (array $r): array => ['pid' => (int) $r['pid'], 'request_id' => (int) $r['request_id'], 'started_at' => $r['started_at'], 'proc_start' => $r['proc_start'] ?? null],
             $this->db->pdo->query('SELECT * FROM workers')->fetchAll(),
         );
     }

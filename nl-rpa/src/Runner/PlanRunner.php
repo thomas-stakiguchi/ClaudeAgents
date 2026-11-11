@@ -69,25 +69,19 @@ final class PlanRunner
     public static function recordFirstRowConfirmation(Ledger $ledger, StepStateStore $states, string $runId, array $rows, array $stepIds, string $by, string $osUser): ?string
     {
         $gate = new \Src\Guard\FirstRowGate($ledger, $states);
-        $first = null;
-        foreach ($rows as $row) {
-            foreach ($stepIds as $sid) {
-                if (in_array($row->business_key ?? null, $gate->executedKeys($runId, [$row], $sid), true)) {
-                    $first = $row->business_key;
-                    break 2;
-                }
-            }
-        }
-        if (! is_string($first)) {
+        $executed = $gate->executedKeys($runId, $rows, $stepIds);
+        if ($executed === []) {
             return 'この実行で、まだ実行した行がありません';
         }
+        $first = $executed[0]; // 登録した順で、最初に手を付けた行
+        // その行で、この実行が手を付けた手順が、すべて「成功」であること
         foreach ($stepIds as $sid) {
             $cur = $states->current($first, $sid);
-            if ($cur === null || $cur['run_id'] !== $runId || $cur['state'] !== StepStateStore::SUCCEEDED) {
+            if ($cur !== null && $cur['run_id'] === $runId && $cur['state'] !== StepStateStore::SUCCEEDED && $cur['state'] !== StepStateStore::FAILED) {
                 return "最初に実行した行（{$first}）の結果が、すべて「成功」になっていないため、確認できません";
             }
         }
-        $ledger->append('first_row_confirmed', $runId, (object) ['by' => $by, 'os_user' => $osUser, 'business_key' => $first]);
+        $ledger->append('first_row_confirmed', $runId, (object) ['by' => $by, 'os_user' => $osUser, 'business_key' => $first, 'host' => gethostname() ?: 'unknown']);
 
         return null;
     }
@@ -167,6 +161,14 @@ final class PlanRunner
             $ctx->registered = is_array($run->rows ?? null) ? $run->rows : [];
             if (count($rows) !== count($ctx->registered)) {
                 return $this->refuse('入力データの件数が、登録した件数と違います');
+            }
+            // 同じ計画の、ほかの実行が、初回の1件の確認待ちなら、先に確認する（登録し直して、確認なしに1行ずつ進めない）
+            foreach ($this->ledger->latestPerSubject('run') as $other) {
+                $o = $other['payload'];
+                if ($other['subject'] !== $runId && ($o->plan_hash ?? null) === $ctx->hash && is_array($o->rows ?? null)
+                    && $this->gate->awaitingConfirmation($other['subject'], $o->rows, $ctx->irreversible)) {
+                    return $this->refuse("別の実行（{$other['subject']}）の初回の1件が、確認されていません。先に確認してください");
+                }
             }
             // ロックを取ったあとに、異常終了で残った「処理中」を「要確認」にする（14-3の5）
             $this->states->recoverAfterCrash();
@@ -277,8 +279,8 @@ final class PlanRunner
                         continue;
                     }
                     // 初回の1件：この実行で、先に手を付けた行があるなら、その行が成功し、確認されるまで、次へ進まない
-                    $others = array_values(array_diff($this->gate->executedKeys($ctx->runId, $ctx->registered, $loopIrr[0] ?? ''), [$key]));
-                    if ($others !== [] && ! $this->gate->isConfirmed($ctx->runId, $ctx->registered, $loopIrr[0] ?? '')) {
+                    $others = array_values(array_diff($this->gate->executedKeys($ctx->runId, $ctx->registered, $loopIrr), [$key]));
+                    if ($others !== [] && ! $this->gate->isConfirmed($ctx->runId, $ctx->registered, $loopIrr)) {
                         $report->status = RunReport::AWAITING_FIRST_ROW;
                         $report->reasons[] = '初回の1件の確認が済むまで、残りは実行しません';
 
@@ -311,7 +313,9 @@ final class PlanRunner
                     return $report->halt('画面を初期状態に戻せません: '.$e->getMessage());
                 }
                 $report->rows[] = $rowReport;
-                if ($ctx->mode === 'real' && $wasFirst && $i < count($rows) - 1 && ! $this->gate->isConfirmed($ctx->runId, $ctx->registered, $loopIrr[0] ?? '')) {
+                // この行で、取り消せない手順を、実際に実行したか（条件分岐で、通らなかった行は、初回の1件に数えない）
+                $didExecute = $ctx->mode === 'real' && in_array($key, $this->gate->executedKeys($ctx->runId, $ctx->registered, $loopIrr), true);
+                if ($ctx->mode === 'real' && $wasFirst && $didExecute && $i < count($rows) - 1 && ! $this->gate->isConfirmed($ctx->runId, $ctx->registered, $loopIrr)) {
                     $report->status = RunReport::AWAITING_FIRST_ROW;
                     $report->reasons[] = '初回は1件だけ実行して止まります。結果を確認してから、残りを実行してください';
 

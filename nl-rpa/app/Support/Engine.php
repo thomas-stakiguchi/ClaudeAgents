@@ -48,18 +48,62 @@ final class Engine
         $this->store = new AppStore($this->db, $clock);
     }
 
-    /** データの置き場を検査して、作る（なければ）。リポジトリの中や、相対パスは拒否（LOC-4） */
+    /**
+     * パスを正規化する。「//」「.」「..」を、文字列として整理し、存在する一番深い親は、シンボリックリンクも解決する。
+     * 存在しないパスでも使える（作る前に、リポジトリの中かを判定するため）。相対パスは、null。
+     */
+    public static function resolvePath(string $path): ?string
+    {
+        if ($path === '' || $path[0] !== '/') {
+            return null;
+        }
+        $parts = [];
+        foreach (explode('/', $path) as $seg) {
+            if ($seg === '' || $seg === '.') {
+                continue;
+            }
+            if ($seg === '..') {
+                array_pop($parts);
+                continue;
+            }
+            $parts[] = $seg;
+        }
+        // 存在する一番深い親を、実体のパスにする。存在しない部分は、元の順で、後ろに付ける
+        $rest = [];
+        while ($parts !== []) {
+            $real = @realpath('/'.implode('/', $parts));
+            if ($real !== false) {
+                return rtrim($real, '/').($rest === [] ? '' : '/'.implode('/', $rest));
+            }
+            array_unshift($rest, array_pop($parts));
+        }
+
+        return '/'.implode('/', $rest);
+    }
+
+    /** $path が、$dir の中（または同じ）か。どちらも resolvePath を通した値で比べる */
+    public static function isInside(string $path, string $dir): bool
+    {
+        $p = self::resolvePath($path);
+        $d = self::resolvePath($dir);
+
+        return $p !== null && $d !== null && ($p === $d || str_starts_with($p.'/', rtrim($d, '/').'/'));
+    }
+
+    /** データの置き場を検査して、作る（なければ）。リポジトリの中や、相対パスは拒否（LOC-4）。作る前に、判定する */
     public static function checkedDataDir(?string $dir, string $repoRoot): string
     {
-        if ($dir === null || $dir === '' || ! str_starts_with($dir, '/')) {
+        if ($dir === null || $dir === '' || ! str_starts_with($dir, '/') || self::resolvePath($dir) === null) {
             throw new \RuntimeException('NL_RPA_DATA_DIR に、リポジトリの外の絶対パスを指定してください');
+        }
+        if (self::isInside($dir, $repoRoot)) {
+            throw new \RuntimeException('データの置き場は、リポジトリの外にしてください（LOC-4）');
         }
         if (! is_dir($dir) && ! @mkdir($dir, 0700, true) && ! is_dir($dir)) {
             throw new \RuntimeException("データの置き場を作れません: {$dir}");
         }
         $real = realpath($dir);
-        $repo = realpath($repoRoot);
-        if ($real === false || $repo === false || $real === $repo || str_starts_with($real.'/', $repo.'/')) {
+        if ($real === false || self::isInside($real, $repoRoot)) {
             throw new \RuntimeException('データの置き場は、リポジトリの外にしてください（LOC-4）');
         }
         @chmod($real, 0700);

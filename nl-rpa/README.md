@@ -66,7 +66,7 @@ php artisan nlrpa:worker 1
 |---|---|
 | `php artisan nlrpa:serve` | 起動（トークンの発行と表示） |
 | `php artisan nlrpa:worker {要求の番号}` | 要求を1件処理する |
-| `php artisan nlrpa:emergency-stop` | 緊急停止。キルスイッチを立て、ワーカーと子プロセスを終了する（Linuxのみ） |
+| `php artisan nlrpa:emergency-stop` | 緊急停止。キルスイッチを立て、記録したワーカーと子孫のプロセスを終了する（Linuxのみ。PIDと開始時刻が一致するものだけ） |
 | `php artisan nlrpa:kill-switch off` | キルスイッチの解除 |
 | `php artisan nlrpa:recover` | 異常終了のあとの後始末（処理中→要確認）。「処理中」の行は、これを実行してから、画面で判定する |
 

@@ -477,4 +477,108 @@ class RunnerTest extends TestCase
         $this->assertSame(RunReport::HALTED, $r->status);
         $this->assertSame([], $this->browser->orders());
     }
+
+    // ---- Opus再レビューの再現入力（初回の1件） ----
+
+    public function test_登録し直しても_確認なしに1行ずつ進められない(): void
+    {
+        $this->prepareRun();
+        $r1 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r1->status);
+        $this->assertCount(1, $this->browser->orders());
+        // 確認しないまま、同じ入力で登録し直して、実行する
+        $this->assertSame([], $this->registrar->register('RUN-2', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        $r2 = $this->runner->run($this->plan, $this->inputs, 'RUN-2', $this->rows);
+        $this->assertSame(RunReport::REFUSED_TO_START, $r2->status);
+        $this->assertStringContainsString('RUN-1', implode(' ', $r2->reasons));
+        $this->assertCount(1, $this->browser->orders(), '確認なしに、2件目が実行された');
+        // 確認すれば、先へ進める
+        $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
+        $this->assertSame(RunReport::COMPLETED, $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows)->status);
+        $this->assertCount(3, $this->browser->orders());
+    }
+
+    public function test_Guardも_別の実行が確認待ちなら_拒否する(): void
+    {
+        $this->prepareRun();
+        $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows); // K-001 だけ実行して、確認待ち
+        $this->assertSame([], $this->registrar->register('RUN-2', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        $a = new \Src\Runner\BrowserIrreversibleAction($this->guard, $this->browser, new \Src\Runner\Verifier($this->browser), $this->rows[1]);
+        $o = $this->guard->run(new \Src\Guard\GuardRequest($this->plan, $this->inputs, 'S-005', 'K-002', 'RUN-2', 'stub', $this->rows[1], ['item_code' => 'DEF', 'quantity' => '30']), $a);
+        $this->assertFalse($o->executed);
+        $this->assertNotEmpty(array_filter($o->reasons, fn ($x) => str_contains($x, '別の実行')));
+    }
+
+    public function test_1行だけの実行は確認待ちにならず_次の実行を妨げない(): void
+    {
+        $this->prepareRun();
+        $one = [$this->rows[0]];
+        $this->assertSame([], $this->registrar->register('RUN-ONE', $this->plan, $this->inputs, 'DR-1', 'stub', $one));
+        $this->assertSame(RunReport::COMPLETED, $this->runner->run($this->plan, $this->inputs, 'RUN-ONE', $one)->status);
+        $this->assertSame([], $this->registrar->register('RUN-3', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-3', $this->rows);
+        $this->assertNotSame(RunReport::REFUSED_TO_START, $r->status, implode(' / ', $r->reasons));
+    }
+
+    /** 条件分岐の計画：画面に「発注入力」が見えれば、登録ボタンを押して結果を読む。見えなければ、読み取りだけ */
+    private function branchPlan(): \stdClass
+    {
+        $plan = StrictJson::decode(file_get_contents(dirname(__DIR__, 2).'/stubs/order_plan.json'));
+        $loop = $plan->steps[1];
+        $click = $loop->steps[3];
+        $read = $loop->steps[4];
+        array_pop($loop->steps); // S-006 は、then の中へ（登録ボタンを押したあとにしか、発注番号は出ない）
+        $loop->steps[3] = StrictJson::decode('{"id":"S-020","action":"if","source":null,
+            "condition":{"type":"text_visible","value":"発注入力"},
+            "then":[],
+            "else":[{"id":"S-021","action":"read_text","destination":{"kind":"browser","name":"stub"},"target":"item_code","verify":{"type":"element_exists","value":"item_code"},"source":null}]}');
+        $loop->steps[3]->then = [$click, $read];
+
+        return $plan;
+    }
+
+    public function test_取り消せない手順を通らなかった行は_初回の1件に数えず_行き詰まらない(): void
+    {
+        $this->plan = $this->branchPlan();
+        $this->rows = [
+            ['商品コード' => 'ZZZ', '数量' => '1', '伝票番号' => 'K-001'], // 1行目：else に入る（取り消せない手順を通らない）
+            ['商品コード' => 'DEF', '数量' => '30', '伝票番号' => 'K-002'],
+            ['商品コード' => 'GHI', '数量' => '5', '伝票番号' => 'K-003'],
+        ];
+        // 商品コードが ZZZ の行だけ、画面に「発注入力」が見えない（if の判定が false になる）
+        $b = $this->browser;
+        $b->textVisibleOverride = fn (string $text, bool $real): bool => $text === '発注入力' && $b->readValueOrEmpty('item_code') === 'ZZZ' ? false : $real;
+        $this->prepareRun();
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame('done', $r->rows[0]['status']);
+        $this->assertNull($this->states->get('K-001', 'S-005'), '1行目は、取り消せない手順を通っていない');
+        $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r->status, implode(' / ', $r->reasons));
+        $this->assertSame('succeeded', $this->states->get('K-002', 'S-005'), '2行目が、この実行の初回の1件');
+        $this->assertCount(1, $this->browser->orders());
+        // 確認できて、先へ進める（1行目は、何も実行していないので、確認の対象ではなく、行き詰まらない）
+        $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
+        $r2 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::COMPLETED, $r2->status, implode(' / ', $r2->reasons));
+        $this->assertCount(2, $this->browser->orders());
+    }
+
+    public function test_1行に取り消せない手順が2つあり_途中を未実行と判定した行は_自動では再開しない(): void
+    {
+        // quantity の登録を外して、S-004 も取り消せない手順にする（読み返しの項目も付ける）
+        $this->inputs['registrations']->autosave_free_inputs = [(object) ['destination' => 'stub', 'target' => 'item_code']];
+        $this->plan->steps[1]->steps[2]->readback = StrictJson::decode('[{"target":"item_code","column":"商品コード","rule":{"trim":true}}]');
+        $this->prepareRun();
+        $this->browser->failAfterClick = true;
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertSame('succeeded', $this->states->get('K-001', 'S-004'));
+        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->browser->failAfterClick = false;
+        $this->states->resolve('K-001', 'S-005', false, '佐藤'); // 未実行と判定
+        $orders = count($this->browser->orders());
+        $r2 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        // 途中の手順（S-004）は、すでに成功。画面は初期状態に戻っているので、安全のため、止まる（二重には実行しない）
+        $this->assertSame(RunReport::HALTED, $r2->status);
+        $this->assertCount($orders, $this->browser->orders());
+    }
 }

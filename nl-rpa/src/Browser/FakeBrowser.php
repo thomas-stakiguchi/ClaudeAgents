@@ -30,6 +30,8 @@ final class FakeBrowser implements BrowserPort
     /** @var \stdClass */
     private \stdClass $def;
 
+    /** @var (\Closure(string,bool):bool)|null 試験用：画面に文字があるかの判定を、書き換える（文字, 本当の結果 → 返す結果） */
+    public ?\Closure $textVisibleOverride = null;
     /** 試験用：画面を初期状態へ戻すのに失敗する */
     public bool $failReset = false;
 
@@ -127,6 +129,13 @@ final class FakeBrowser implements BrowserPort
     }
 
     public function textVisible(string $text): bool
+    {
+        $real = $this->textVisibleReal($text);
+
+        return $this->textVisibleOverride ? ($this->textVisibleOverride)($text, $real) : $real;
+    }
+
+    private function textVisibleReal(string $text): bool
     {
         $p = $this->page($this->page);
         foreach ($p->text as $t) {

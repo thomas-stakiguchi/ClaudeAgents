@@ -42,6 +42,11 @@ class NlrpaServe extends Command
             return self::FAILURE;
         }
         $port = (int) config('nlrpa.port');
+        if ($port < 1 || $port > 65535) {
+            $this->error('NL_RPA_PORT は、1〜65535 の整数にしてください。トークンは発行しませんでした');
+
+            return self::FAILURE;
+        }
         // 待ち受けられないのに、トークンを発行して、今動いている画面のセッションを無効にしない
         $probe = @stream_socket_server("tcp://127.0.0.1:{$port}", $errno, $errstr);
         if ($probe === false) {
@@ -67,6 +72,28 @@ class NlrpaServe extends Command
             return self::FAILURE;
         }
 
-        return proc_close($proc) === 0 ? self::SUCCESS : self::FAILURE;
+        // 親だけを止められても、子のサーバーが残らないよう、終了の合図を子に転送する
+        $stop = static function () use ($proc): void {
+            @proc_terminate($proc);
+        };
+        if (function_exists('pcntl_async_signals')) {
+            pcntl_async_signals(true);
+            foreach ([SIGINT, SIGTERM, SIGHUP] as $sig) {
+                pcntl_signal($sig, $stop);
+            }
+        }
+        $code = null;
+        while (true) {
+            $status = proc_get_status($proc);
+            if (! $status['running']) {
+                $code = $status['exitcode'];
+                break;
+            }
+            usleep(200000);
+        }
+        proc_close($proc);
+
+        // 合図で止めたときは、正常な終了として扱う（143=SIGTERM、130=SIGINT）
+        return in_array($code, [0, 130, 143, -1], true) ? self::SUCCESS : self::FAILURE;
     }
 }

@@ -84,7 +84,11 @@ final class Schema
         $pdo->exec('CREATE TABLE IF NOT EXISTS workers (
             pid INTEGER PRIMARY KEY,
             request_id INTEGER NOT NULL,
-            started_at TEXT NOT NULL
+            started_at TEXT NOT NULL,
+            proc_start TEXT
         )');
+        // 既存のDBには、列がないので、足す（プロセスの開始時刻。PIDの再利用で、別のプロセスを終了しないため）
+        $cols = array_column($pdo->query('PRAGMA table_info(workers)')->fetchAll(), 'name');
+        in_array('proc_start', $cols, true) || $pdo->exec('ALTER TABLE workers ADD COLUMN proc_start TEXT');
     }
 }

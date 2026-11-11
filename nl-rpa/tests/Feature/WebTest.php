@@ -402,17 +402,6 @@ class WebTest extends TestCase
         $this->assertSame(1, Artisan::call('nlrpa:kill-switch', ['state' => 'maybe']));
     }
 
-    public function test_緊急停止はワーカーに見えない無関係なプロセスを終了しない(): void
-    {
-        $this->engine();
-        // 自分自身（テストのプロセス）のPIDを、ワーカーとして登録しても、コマンドラインに nlrpa:worker がなければ終了しない
-        $this->engine()->store->registerWorker(getmypid(), 1);
-        Artisan::call('nlrpa:emergency-stop');
-        $this->assertStringContainsString('ワーカーではありません', Artisan::output());
-        $this->assertSame([], $this->engine()->store->workers());
-        $this->assertTrue(true, 'まだ生きている');
-    }
-
     public function test_serveはデバッグが有効なら起動しない(): void
     {
         $this->engine();
@@ -566,38 +555,127 @@ class WebTest extends TestCase
         }
     }
 
-    public function test_緊急停止はワーカーとその子プロセスを終了し_無関係なプロセスは終了しない(): void
+    /** 緊急停止の試験用に、プロセスを起動する */
+    private function spawn(array $cmd): array
+    {
+        $p = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        usleep(400000);
+
+        return [$p, proc_get_status($p)['pid']];
+    }
+
+    private function alive(int $pid): bool
+    {
+        return \App\Support\ProcessInfo::isAlive($pid);
+    }
+
+    public function test_緊急停止は記録したワーカーと子孫を終了する_コマンドラインの書き方に依らない(): void
     {
         if (! is_dir('/proc')) {
             $this->markTestSkipped('Linux専用');
         }
         $this->engine();
-        $spawn = function (array $cmd) {
-            $p = proc_open($cmd, [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
-            usleep(300000);
-
-            return [$p, proc_get_status($p)['pid']];
-        };
-        // 本物のワーカーに見えるプロセス（コマンドラインが「artisan nlrpa:worker 7」）と、無関係なプロセス
-        [$worker, $wpid] = $spawn([PHP_BINARY, '-r', 'sleep(60);', 'artisan', 'nlrpa:worker', '7']);
-        [$other, $opid] = $spawn([PHP_BINARY, '-r', 'sleep(60);', 'less', 'nlrpa:worker.log']);
+        // ワーカー（孫まで作る）。コマンドラインは、「artisan nlrpa:worker」と全然違う書き方でもよい
+        $grand = 'proc_open([PHP_BINARY, "-r", "sleep(60);"], [], $g); sleep(60);';
+        $child = 'proc_open([PHP_BINARY, "-r", '.var_export($grand, true).'], [], $c); sleep(60);';
+        [$worker, $wpid] = $this->spawn([PHP_BINARY, '-r', 'proc_open([PHP_BINARY, "-r", '.var_export($child, true).'], [], $p); sleep(60);', 'artisan', 'nlrpa:work', '-v', '07']);
+        $descendants = \App\Support\ProcessInfo::descendants($wpid);
+        $this->assertGreaterThanOrEqual(2, count($descendants), '子と孫が、起動していない');
         try {
-            $this->engine()->store->registerWorker($wpid, 7);
-            $this->engine()->store->registerWorker($opid, 7); // 要求番号が合っても、コマンドラインが違えば、対象外
-            Artisan::call('nlrpa:emergency-stop');
-            proc_get_status($worker);
+            $this->engine()->store->registerWorker($wpid, 7, \App\Support\ProcessInfo::startTime($wpid));
+            $this->assertSame(0, Artisan::call('nlrpa:emergency-stop'));
             usleep(300000);
-            clearstatcache();
-            $wstat = (string) @file_get_contents("/proc/{$wpid}/stat");
-            $this->assertTrue($wstat === '' || str_contains($wstat, ') Z'), 'ワーカーが終了していない: '.substr($wstat, 0, 40));
-            $ostat = (string) @file_get_contents("/proc/{$opid}/stat");
-            $this->assertTrue($ostat !== '' && ! str_contains($ostat, ') Z'), '無関係なプロセスを終了してしまった');
+            $this->assertFalse($this->alive($wpid), 'ワーカーが終了していない');
+            foreach ($descendants as $d) {
+                $this->assertFalse($this->alive($d), "子孫 {$d} が終了していない");
+            }
+            $this->assertSame([], $this->engine()->store->workers());
+        } finally {
+            @proc_terminate($worker, 9);
+            foreach ($descendants as $d) {
+                @posix_kill($d, SIGKILL);
+            }
+            @proc_close($worker);
+        }
+    }
+
+    public function test_緊急停止は開始時刻が違うプロセス_PIDの再利用_を終了しない(): void
+    {
+        if (! is_dir('/proc')) {
+            $this->markTestSkipped('Linux専用');
+        }
+        $this->engine();
+        [$other, $opid] = $this->spawn([PHP_BINARY, '-r', 'sleep(60);']);
+        try {
+            // 記録した開始時刻が、今のプロセスと違う（＝PIDが再利用された、別のプロセス）
+            $this->engine()->store->registerWorker($opid, 7, '1');
+            Artisan::call('nlrpa:emergency-stop');
+            $this->assertStringContainsString('別のプロセス', Artisan::output());
+            $this->assertTrue($this->alive($opid), '無関係なプロセスを終了してしまった');
+            // 開始時刻の記録がない登録も、終了しない
+            $this->engine()->store->registerWorker($opid, 7, null);
+            Artisan::call('nlrpa:emergency-stop');
+            $this->assertTrue($this->alive($opid));
             $this->assertSame([], $this->engine()->store->workers());
         } finally {
             @proc_terminate($other, 9);
-            @proc_terminate($worker, 9);
             @proc_close($other);
-            @proc_close($worker);
         }
+    }
+
+    public function test_ワーカーは起動時に開始時刻を記録する(): void
+    {
+        $this->engine();
+        $this->engine()->store->registerWorker(getmypid(), 1, \App\Support\ProcessInfo::startTime(getmypid()));
+        $w = $this->engine()->store->workers()[0];
+        $this->assertNotNull($w['proc_start']);
+        $this->assertMatchesRegularExpression('/\A[0-9]+\z/', $w['proc_start']);
+    }
+
+    public function test_プロセス名に括弧や空白があってもstatを正しく読む(): void
+    {
+        $pid = getmypid();
+        $r = \App\Support\ProcessInfo::read($pid);
+        $this->assertNotNull($r);
+        $this->assertContains($r['state'], ['R', 'S', 'D']);
+        $this->assertGreaterThan(0, $r['ppid']);
+    }
+
+    public function test_ポートの値が不正ならトークンを発行しない(): void
+    {
+        $this->engine();
+        config(['app.debug' => false]);
+        foreach ([0, -1, 65536, 99999] as $bad) {
+            config(['nlrpa.port' => $bad]);
+            $this->assertSame(1, Artisan::call('nlrpa:serve'), (string) $bad);
+            $this->assertNull($this->app->make(AccessToken::class)->currentHash(), 'トークンを発行してはいけない');
+        }
+    }
+
+    public function test_データ置き場の判定は二重スラッシュやドット二つやシンボリックリンクでも迂回できない(): void
+    {
+        $repo = base_path();
+        $link = sys_get_temp_dir().'/nlrpa_link_'.bin2hex(random_bytes(3));
+        symlink($repo, $link);
+        try {
+            foreach ([
+                str_replace('/', '//', $repo).'/storage/zz',
+                $repo.'/storage/../storage/zz',
+                $repo.'/../'.basename($repo).'/storage/zz',
+                $link.'/storage/zz',
+                $link,
+            ] as $bad) {
+                try {
+                    Engine::checkedDataDir($bad, $repo);
+                    $this->fail('拒否されるはず: '.$bad);
+                } catch (\RuntimeException) {
+                    $this->assertTrue(true);
+                }
+                $this->assertFalse(is_dir($repo.'/storage/zz'), '判定の前に、ディレクトリを作ってしまった: '.$bad);
+            }
+        } finally {
+            @unlink($link);
+        }
+        $this->assertFalse(Engine::isInside('/tmp/somewhere', $repo));
     }
 }

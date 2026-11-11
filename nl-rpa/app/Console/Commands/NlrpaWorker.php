@@ -37,7 +37,7 @@ class NlrpaWorker extends Command
             return self::FAILURE;
         }
         $pid = getmypid();
-        $e->store->registerWorker($pid, $id);
+        $e->store->registerWorker($pid, $id, \App\Support\ProcessInfo::startTime($pid));
         $e->ledger->append('worker', 'request:'.$id, (object) ['event' => 'started', 'pid' => $pid, 'os_user' => Engine::osUser(), 'host' => gethostname() ?: 'unknown']);
         $result = ['status' => 'aborted', 'reasons' => ['ワーカーが異常終了しました']];
         try {

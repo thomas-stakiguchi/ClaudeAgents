@@ -409,18 +409,26 @@ class GuardTest extends TestCase
 
     public function test_前の実行で成功した行は初回の1件に数えない(): void
     {
-        // 前の実行（RUN-0）で、K-001 が成功している状態
+        // 前の実行（RUN-0。登録なし）で、K-001 が成功している状態
         $this->states->markProcessing('K-001', 'S-005', 'h', 'RUN-0');
         $this->states->markSucceeded('K-001', 'S-005');
-        $a = $this->action();
-        $req2 = $this->req(['businessKey' => 'K-002', 'rowValues' => $this->rows[1], 'readbackRaw' => ['item_code' => 'DEF', 'quantity' => '30']]);
-        // 今回の実行 RUN-1 では、K-002 が最初に実行する行。確認なしで実行できる（そして、その次からは確認が要る）
-        $this->assertTrue($this->guard->run($req2, $a)->executed);
-        $this->ledger->append('first_row_confirmed', 'RUN-1', (object) ['by' => '佐藤', 'os_user' => 'tester', 'business_key' => 'K-001']);
-        // K-001 は前の実行の成功なので、確認の対象にならない（この実行の成功ではない）
-        $this->states->markProcessing('K-003', 'S-005', 'h', 'RUN-1');
-        $this->states->markNeedsReview('K-003', 'S-005');
-        $this->assertNotEmpty($this->guard->run($this->req(['businessKey' => 'K-003']), $this->action())->reasons);
+        // 今回の実行 RUN-3（K-001〜K-003）
+        $rows = [...$this->rows, ['商品コード' => 'GHI', '数量' => '5', '伝票番号' => 'K-003']];
+        $this->assertSame([], $this->register('RUN-3', $rows));
+        $mk = fn (int $i, array $raw) => $this->req(['runId' => 'RUN-3', 'businessKey' => $rows[$i]['伝票番号'], 'rowValues' => $rows[$i], 'readbackRaw' => $raw]);
+        // K-002 が、RUN-3 で最初に実行する行。確認なしで実行できる
+        $a2 = $this->action();
+        $this->assertTrue($this->guard->run($mk(1, ['item_code' => 'DEF', 'quantity' => '30']), $a2)->executed);
+        // 前の実行で成功した K-001 を対象にした確認は、無効（この実行の成功ではない）
+        $this->ledger->append('first_row_confirmed', 'RUN-3', (object) ['by' => '佐藤', 'os_user' => 'tester', 'business_key' => 'K-001']);
+        $a3 = $this->action();
+        $o = $this->guard->run($mk(2, ['item_code' => 'GHI', 'quantity' => '5']), $a3);
+        $this->assertFalse($o->executed);
+        $this->assertSame(0, $a3->calls);
+        $this->assertContains('初回の1件の確認が済んでいません（この実行で先に実行した行が、成功し、確認されるまで、次へ進めません）', $o->reasons);
+        // この実行の成功（K-002）を対象にした確認なら、有効
+        $this->ledger->append('first_row_confirmed', 'RUN-3', (object) ['by' => '佐藤', 'os_user' => 'tester', 'business_key' => 'K-002']);
+        $this->assertTrue($this->guard->run($mk(2, ['item_code' => 'GHI', 'quantity' => '5']), $a3)->executed);
     }
 
     // ---- 実行後の異常 ----
@@ -488,12 +496,14 @@ class GuardTest extends TestCase
             fn () => Permit::mint((new \ReflectionClass(IrreversibleGuard::class))->newInstanceWithoutConstructor(), 'h', 'S-005', 'K-001', 'RUN-1', 'guess', '{}'),
         ];
         foreach ($forged as $i => $make) {
+            $thrown = false;
             try {
                 $a->perform($make());
-                $this->fail("case {$i}: 偽造した許可で実行できた");
-            } catch (\Throwable $e) {
-                $this->assertSame(0, $a->calls, "case {$i}");
+            } catch (\Throwable) {
+                $thrown = true;
             }
+            $this->assertTrue($thrown, "case {$i}: 偽造した許可で実行できた");
+            $this->assertSame(0, $a->calls, "case {$i}");
         }
     }
 
@@ -511,12 +521,14 @@ class GuardTest extends TestCase
             $rcR->newInstanceWithoutConstructor(),
         ];
         foreach ($forgedProofs as $i => $proof) {
+            $thrown = false;
             try {
                 $a->backdoor($proof);
-                $this->fail("case {$i}: 裏口から実行できた");
             } catch (\Throwable) {
-                $this->assertSame(0, $a->calls, "case {$i}");
+                $thrown = true;
             }
+            $this->assertTrue($thrown, "case {$i}: 裏口から実行できた");
+            $this->assertSame(0, $a->calls, "case {$i}");
         }
         $this->assertNull($this->states->get('K-001', 'S-005'));
     }
@@ -584,12 +596,13 @@ class GuardTest extends TestCase
         $this->guard->run($this->req(), $a);
         $this->assertInstanceOf(Permit::class, $captured);
         foreach ([fn () => clone $captured, fn () => serialize($captured), fn () => unserialize('O:'.strlen(Permit::class).':"'.Permit::class.'":0:{}')] as $i => $f) {
+            $thrown = false;
             try {
                 $f();
-                $this->fail("case {$i}");
             } catch (\Throwable) {
-                $this->assertTrue(true);
+                $thrown = true;
             }
+            $this->assertTrue($thrown, "case {$i}: 複製・直列化・復元ができてしまった");
         }
     }
 
