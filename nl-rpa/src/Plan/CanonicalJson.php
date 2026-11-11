@@ -8,8 +8,9 @@ namespace Src\Plan;
  * RFC 8785（JSON Canonicalization Scheme）に沿った正規化。
  *
  * 入力の約束：
- *  - JSONのオブジェクトは、stdClass か、キーが文字列の連想配列で渡す
- *  - JSONの配列は、0から連番の配列で渡す（空の配列[]は、配列として扱う。空のオブジェクトはstdClass）
+ *  - JSONのオブジェクトは、必ず stdClass で渡す（json_decode の assoc=false の結果）
+ *  - JSONの配列は、0から連番の PHP配列で渡す。キーが連番でない配列は拒否する
+ *    （連想配列を受けると、{"0":..} と [..]、{} と [] が区別できず、別の計画が同じハッシュになるため）
  *  - 数値は int か 有限の float（NaN・INFは拒否）
  */
 final class CanonicalJson
@@ -32,15 +33,14 @@ final class CanonicalJson
             return self::string($value);
         }
         if ($value instanceof \stdClass) {
-            $value = get_object_vars($value);
-            return self::object($value);
+            return self::object(get_object_vars($value));
         }
         if (is_array($value)) {
-            if (array_is_list($value)) {
-                return '['.implode(',', array_map(self::encode(...), $value)).']';
+            if (! array_is_list($value)) {
+                throw new \InvalidArgumentException('連想配列は使えません。オブジェクトは stdClass で渡してください');
             }
 
-            return self::object($value);
+            return '['.implode(',', array_map(self::encode(...), $value)).']';
         }
 
         throw new \InvalidArgumentException('正規化できない型です: '.get_debug_type($value));
@@ -49,12 +49,17 @@ final class CanonicalJson
     /** @param array<array-key,mixed> $obj */
     private static function object(array $obj): string
     {
-        $keys = array_map('strval', array_keys($obj));
+        // キーと値を組にして並べ替える（キーだけ取り出して引き直すと、nullの値や数字のキーで取り違える）
+        $pairs = [];
+        foreach ($obj as $k => $v) {
+            $key = (string) $k;
+            $pairs[] = [$key, self::utf16($key), $v];
+        }
         // キーは、UTF-16のコード単位の順に並べる（RFC 8785 3.2.3）
-        usort($keys, static fn (string $a, string $b): int => strcmp(self::utf16($a), self::utf16($b)));
+        usort($pairs, static fn (array $a, array $b): int => strcmp($a[1], $b[1]));
         $parts = [];
-        foreach ($keys as $k) {
-            $parts[] = self::string($k).':'.self::encode($obj[$k] ?? $obj[(int) $k] ?? null);
+        foreach ($pairs as [$key, , $v]) {
+            $parts[] = self::string($key).':'.self::encode($v);
         }
 
         return '{'.implode(',', $parts).'}';
