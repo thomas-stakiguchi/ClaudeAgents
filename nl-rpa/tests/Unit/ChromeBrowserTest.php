@@ -170,6 +170,16 @@ class ChromeBrowserTest extends TestCase
         // エンジンが検知して、停止にできるもの（WebSocket と Service Worker は、起動時の遮断が、黙って止める）
         $mustDetect = array_values(array_diff(array_keys($cases), ['websocket', 'service_worker']));
         $base = "http://localhost:{$app}";
+        // 対照：名前解決の遮断なしでは、evil.test の外部へ、実際に届く（この試験が、意味を持つことの確認）
+        $control = (new \HeadlessChromium\BrowserFactory($this->chrome))->createBrowser(['headless' => true, 'noSandbox' => true, 'customFlags' => ['--host-resolver-rules=MAP evil.test 127.0.0.1']]);
+        try {
+            $pg = $control->createPage();
+            $pg->navigate("{$base}/fetch.html?evil=".urlencode("http://evil.test:{$can}"))->waitForNavigation();
+            usleep(800000);
+        } finally {
+            $control->close();
+        }
+        $this->assertNotEmpty(array_filter(file($canaryLog) ?: []), '対照で、外部へ届かない。この試験は、意味がない');
         foreach (['evil.test' => "http://evil.test:{$can}", 'ip' => "http://127.0.0.1:{$can}"] as $label => $evil) {
             $urls = ['start' => "{$base}/ok"];
             foreach ($cases as $c => $path) {
@@ -183,13 +193,16 @@ class ChromeBrowserTest extends TestCase
                     try {
                         $b->openUrl($c);
                         $b->textVisible('x'); // 続けて、操作する（遅れて起きた遮断・新しいウィンドウを、検知させる）
-                        usleep(700000);
+                        usleep(1500000);
                         $b->textVisible('x');
-                    } catch (\Throwable) {
+                    } catch (\Throwable $e) {
+                        // タイムアウトなどではなく、本当の遮断・検知の例外であること
+                        $this->assertMatchesRegularExpression('/遮断|新しいウィンドウ|ダイアログ|ダウンロード|許可していない/u', $e->getMessage(), "{$label}: {$c}: 検知以外の例外: ".$e->getMessage());
                         $detected = true;
                     }
-                    $hits = array_filter(file($canaryLog) ?: [], fn ($l) => str_contains($l, '"case":"'.$c.'"'));
-                    $this->assertCount(0, $hits, "{$label}: 攻撃 {$c} が、外へ届いた");
+                    // 外部へ届いた要求は、case の付いていないもの（preconnectなど）も含めて、すべて数える
+                    $hits = array_filter(file($canaryLog) ?: []);
+                    $this->assertCount(0, $hits, "{$label}: 攻撃 {$c} が、外へ届いた: ".implode('', $hits));
                     if (in_array($c, $mustDetect, true)) {
                         $this->assertTrue($detected, "{$label}: 攻撃 {$c} を、検知して停止にできなかった");
                     }
@@ -255,5 +268,213 @@ class ChromeBrowserTest extends TestCase
         } finally {
             $b->close();
         }
+    }
+
+    // ---- Opusレビュー（ChromeBrowser）の再現入力 ----
+
+    private function pagesBrowser(array $extra, int $port, ?\Closure $mod = null): ChromeBrowser
+    {
+        [$guard] = $this->guardAndPort();
+        $base = "http://localhost:{$port}";
+        $urls = ['start' => "{$base}/login", 'order_page' => "{$base}/order"];
+        foreach ($extra as $name => $path) {
+            $urls[$name] = $base.$path;
+        }
+
+        return new ChromeBrowser(
+            $this->chrome, $this->tmp.'/profiles', new ChromeLaunchPolicy([$base]), $urls,
+            ['item_code' => '#item_code', 'quantity' => '#quantity', 'x' => 'body'], $guard, 'stub', 'chrome', true,
+        );
+    }
+
+    /** イベント（通信の許可の処理を含む）を処理しながら、待つ。usleep だけでは、通信が「許可待ち」のまま止まって、何も起きていないように見える */
+    private function settle(ChromeBrowser $b, float $sec): void
+    {
+        $end = microtime(true) + $sec;
+        while (microtime(true) < $end) {
+            try {
+                $b->pendingDialog();
+            } catch (\Throwable) {
+            }
+            usleep(50000);
+        }
+    }
+
+    private function webStub(): int
+    {
+        $port = $this->freePort();
+        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log']);
+
+        return $port;
+    }
+
+    public function test_WebRTCのUDPは外へ届かない_対照では届く(): void
+    {
+        $udp = stream_socket_server('udp://127.0.0.1:0', $en, $em, STREAM_SERVER_BIND);
+        $stunPort = (int) explode(':', stream_socket_get_name($udp, false))[1];
+        stream_set_blocking($udp, false);
+        $recv = function () use ($udp): int {
+            $n = 0;
+            while (@stream_socket_recvfrom($udp, 2048, 0, $peer) !== false && $peer !== null && $peer !== '') {
+                $n++;
+            }
+
+            return $n;
+        };
+        $port = $this->webStub();
+        $stun = "127.0.0.1:{$stunPort}";
+        // 対照：遮断なしの Chrome では、UDPが届く（この試験が、意味を持つことの確認）
+        $control = (new \HeadlessChromium\BrowserFactory($this->chrome))->createBrowser(['headless' => true, 'noSandbox' => true]);
+        try {
+            $control->createPage()->navigate("http://localhost:{$port}/webrtc?stun={$stun}")->waitForNavigation();
+            usleep(2500000);
+        } finally {
+            $control->close();
+        }
+        $this->assertGreaterThan(0, $recv(), '対照で、UDPが届かない。この試験は、意味がない');
+        // 本番の設定：届かない
+        $b = $this->pagesBrowser(['webrtc' => '/webrtc?stun='.$stun], $port);
+        try {
+            $b->openUrl('webrtc');
+            usleep(2500000);
+            try {
+                $b->textVisible('x');
+            } catch (\RuntimeException) {
+                // 検知されても、されなくても、よい。届かないことが、本題
+            }
+        } finally {
+            $b->close();
+        }
+        $this->assertSame(0, $recv(), 'WebRTCのUDPが、外へ届いた');
+    }
+
+    public function test_ダウンロードは拒否され_プロファイルの外に保存されない(): void
+    {
+        $port = $this->webStub();
+        $home = $this->tmp.'/home';
+        mkdir($home, 0700);
+        $oldHome = getenv('HOME');
+        putenv('HOME='.$home);
+        try {
+            $b = $this->pagesBrowser(['download' => '/download'], $port);
+            try {
+                $thrown = null;
+                try {
+                    $b->openUrl('download');
+                    usleep(1500000);
+                    $b->textVisible('x');
+                } catch (\Throwable $e) {
+                    $thrown = $e->getMessage();
+                }
+                $this->assertNotNull($thrown, 'ダウンロードを検知できなかった');
+                $this->assertStringContainsString('ダウンロード', $thrown);
+            } finally {
+                $b->close();
+            }
+        } finally {
+            $oldHome === false ? putenv('HOME') : putenv('HOME='.$oldHome);
+        }
+        $this->assertSame([], glob($home.'/Downloads/*') ?: [], 'ダウンロードされたファイルが、保存された');
+        $this->assertSame([], glob($home.'/*/*nlrpa_dl*') ?: []);
+    }
+
+    public function test_主フレームがabout_blankやblobへ移ったら停止する(): void
+    {
+        $port = $this->webStub();
+        foreach (['blank' => '/blank', 'blob' => '/blob'] as $name => $path) {
+            $b = $this->pagesBrowser([$name => $path], $port);
+            try {
+                $thrown = null;
+                try {
+                    $b->openUrl($name);
+                    usleep(900000);
+                    $b->textVisible('x');
+                } catch (\Throwable $e) {
+                    $thrown = $e->getMessage();
+                }
+                $this->assertNotNull($thrown, "{$name}: 検知できなかった");
+                $this->assertStringContainsString('許可していない', $thrown, $name);
+            } finally {
+                $b->close();
+            }
+        }
+    }
+
+    public function test_ページがquerySelectorを差し替えても_読み取りは副作用にならない(): void
+    {
+        $port = $this->webStub();
+        $b = $this->pagesBrowser(['trap' => '/trap'], $port);
+        try {
+            $b->openUrl('trap');
+            // 対照：ページの環境（メインの世界）で、同じ操作をすると、罠が動いて、フォームが送信される
+            $ref = new \ReflectionProperty($b, 'page');
+            $ref->getValue($b)->evaluate('document.querySelector("#item_code")');
+            $this->settle($b, 1.5);
+            $this->assertFileExists($this->tmp.'/orders.log', '対照で、罠が動かない。この試験は、意味がない');
+            $before = count(file($this->tmp.'/orders.log'));
+            // 本番：隔離された環境で実行するので、罠は動かない
+            $b->openUrl('trap');
+            $b->readValue('item_code');
+            $b->elementExists('item_code');
+            $b->textVisible('x');
+            $this->settle($b, 1.5);
+            $this->assertSame($before, count(file($this->tmp.'/orders.log')), '読み取りの操作が、副作用になった');
+        } finally {
+            $b->close();
+        }
+    }
+
+    public function test_遅れて開いた新しいウィンドウは_次の操作の前に検知される(): void
+    {
+        $port = $this->webStub();
+        $b = $this->pagesBrowser(['late' => '/late'], $port);
+        try {
+            $b->openUrl('late');
+            usleep(2200000); // 1.2秒後に、新しいウィンドウが開く
+            $thrown = null;
+            try {
+                $b->elementExists('x');
+            } catch (\Throwable $e) {
+                $thrown = $e->getMessage();
+            }
+            $this->assertNotNull($thrown);
+            $this->assertStringContainsString('新しいウィンドウ', $thrown);
+        } finally {
+            $b->close();
+        }
+    }
+
+    public function test_Chromeのバージョンを記録し_許可した範囲の外なら停止する(): void
+    {
+        $port = $this->webStub();
+        $b = $this->pagesBrowser([], $port);
+        try {
+            $this->assertNull($b->chromeVersion());
+            $b->openUrl('start');
+            $ver = $b->chromeVersion();
+            $this->assertMatchesRegularExpression('#Chrome/\d+\.#', (string) $ver);
+        } finally {
+            $b->close();
+        }
+        $major = (int) preg_replace('#.*/(\d+)\..*#', '$1', (string) $ver);
+        [$guard] = $this->guardAndPort();
+        $base = "http://localhost:{$port}";
+        $mk = fn (array $allowed) => new ChromeBrowser($this->chrome, $this->tmp.'/profiles', new ChromeLaunchPolicy([$base]), ['start' => "{$base}/login"], [], $guard, 'stub', 'chrome', true, null, $allowed);
+        $ok = $mk([$major]);
+        try {
+            $ok->openUrl('start');
+            $this->assertSame($ver, $ok->chromeVersion());
+        } finally {
+            $ok->close();
+        }
+        $ng = $mk([$major + 1]);
+        $profileBefore = glob($this->tmp.'/profiles/*') ?: [];
+        try {
+            $ng->openUrl('start');
+            $this->fail('範囲の外なのに、起動できた');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('許可した範囲の外', $e->getMessage());
+        }
+        $this->assertSame($profileBefore, glob($this->tmp.'/profiles/*') ?: [], '停止したのに、プロファイルが残った');
     }
 }

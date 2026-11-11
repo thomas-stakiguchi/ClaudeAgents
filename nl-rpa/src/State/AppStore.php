@@ -222,10 +222,11 @@ final class AppStore
         );
     }
 
-    public function registerProfile(string $dir, int $workerPid): void
+    /** @param string|null $procStart 作ったワーカーの開始時刻（/proc の starttime）。回収が、動いているワーカーのものを、見分けるのに使う */
+    public function registerProfile(string $dir, int $workerPid, ?string $procStart = null): void
     {
-        $st = $this->db->pdo->prepare('INSERT OR REPLACE INTO browser_profiles (dir, worker_pid, created_at) VALUES (?,?,?)');
-        $st->execute([$dir, $workerPid, ($this->clock)()]);
+        $st = $this->db->pdo->prepare('INSERT OR REPLACE INTO browser_profiles (dir, worker_pid, created_at, proc_start) VALUES (?,?,?,?)');
+        $st->execute([$dir, $workerPid, ($this->clock)(), $procStart]);
     }
 
     public function unregisterProfile(string $dir): void
@@ -234,18 +235,18 @@ final class AppStore
         $st->execute([$dir]);
     }
 
-    /** @return list<array{dir:string, worker_pid:int}> */
+    /** @return list<array{dir:string, worker_pid:int, proc_start:string|null}> */
     public function profiles(?int $workerPid = null): array
     {
         $rows = $workerPid === null
-            ? $this->db->pdo->query('SELECT dir, worker_pid FROM browser_profiles ORDER BY created_at')->fetchAll()
+            ? $this->db->pdo->query('SELECT dir, worker_pid, proc_start FROM browser_profiles ORDER BY created_at')->fetchAll()
             : (function () use ($workerPid): array {
-                $st = $this->db->pdo->prepare('SELECT dir, worker_pid FROM browser_profiles WHERE worker_pid = ? ORDER BY created_at');
+                $st = $this->db->pdo->prepare('SELECT dir, worker_pid, proc_start FROM browser_profiles WHERE worker_pid = ? ORDER BY created_at');
                 $st->execute([$workerPid]);
 
                 return $st->fetchAll();
             })();
 
-        return array_map(static fn (array $r): array => ['dir' => (string) $r['dir'], 'worker_pid' => (int) $r['worker_pid']], $rows);
+        return array_map(static fn (array $r): array => ['dir' => (string) $r['dir'], 'worker_pid' => (int) $r['worker_pid'], 'proc_start' => $r['proc_start'] ?? null], $rows);
     }
 }

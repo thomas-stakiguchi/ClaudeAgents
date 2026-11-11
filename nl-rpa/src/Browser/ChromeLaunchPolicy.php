@@ -11,7 +11,7 @@ namespace Src\Browser;
  * 一方、Chromeの起動オプションによる遮断（名前解決の失敗＋使えないプロキシ）は、15種類の攻撃を、すべて遮断できた。
  * このクラスは、許可した接続先（スキーム・ホスト・ポートの完全一致）だけに通信できるよう、起動オプションを作る。
  * 呼び出し側は、オプションを選べない（許可する接続先だけを渡す）。
- * 注意：これは「Chrome自身の設定」。ネットワーク側の制限（SEC-6：プロキシ、ファイアウォール）の代わりにはならない。
+ * 注意：これは「Chrome自身の設定」。起動オプションだけでは、プロキシを通らないUDP（WebRTCなど）を、完全には止められない可能性がある（--force-webrtc-ip-handling-policy の効果は、テストで確認する）。ネットワーク側の制限（SEC-6：プロキシ、ファイアウォール）の代わりにはならない。
  */
 final class ChromeLaunchPolicy
 {
@@ -61,11 +61,13 @@ final class ChromeLaunchPolicy
         $bypass = array_map(static fn (array $o): string => $o['host'].':'.$o['port'], $this->origins);
 
         return [
-            // 名前解決：許可したホスト以外は、解決に失敗させる（IPアドレスの直接指定も、遮断される。検証済み）
+            // 名前解決：許可したホスト以外は、解決に失敗させる（IPアドレスの直接指定も、TCPは遮断される。検証済み。UDPは別。下のWebRTCを参照）
             '--host-resolver-rules=MAP * ~NOTFOUND, '.implode(', ', array_map(static fn (string $h): string => 'EXCLUDE '.$h, $hosts)),
             // 通信：すべてを、使えないプロキシへ向け、許可した接続先（ホスト:ポート）だけを迂回する。<-loopback> で、ループバックの暗黙の迂回を外す
             '--proxy-server=http://127.0.0.1:1',
             '--proxy-bypass-list=<-loopback>;'.implode(';', $bypass),
+            // WebRTC：プロキシを通らないUDP（STUN・TURNなど）を、禁止する。プロキシも名前解決の遮断も、UDPには効かない（検証で、外へ届いた）
+            '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
             // デバッグ接続：既定の「どのOriginも許可（*）」を、上書きして、chrome-php自身のOriginだけにする（検証済み）
             '--remote-allow-origins=http://127.0.0.1',
             // 拡張機能・自動更新・テレメトリなどを、無効にする（SEC-3。効果の確認は、未検証）

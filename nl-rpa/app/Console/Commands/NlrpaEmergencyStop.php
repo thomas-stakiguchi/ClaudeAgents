@@ -39,6 +39,13 @@ class NlrpaEmergencyStop extends Command
             if ($w['proc_start'] === null || $now === null || $now !== $w['proc_start'] || ! ProcessInfo::isAlive($w['pid'])) {
                 $this->line("PID {$w['pid']}：すでに終了しているか、記録したワーカーと別のプロセスです（飛ばします）");
                 $e->store->unregisterWorker($w['pid']);
+                // そのワーカーが残した、使い捨てプロファイルと、孤児のChromeは、回収する
+                $orphans = $e->store->profiles($w['pid']);
+                $r = \App\Support\ProfileCleaner::clean($e->profileRoot(), array_column($orphans, 'dir'));
+                $killed += $r['processes'];
+                foreach ($orphans as $p) {
+                    in_array($p['dir'], $r['skipped'], true) || $e->store->unregisterProfile($p['dir']);
+                }
                 continue;
             }
             // 全体を止めて（新しい子が増えないようにして）、子孫を数え直す。変わらなくなるまで繰り返す

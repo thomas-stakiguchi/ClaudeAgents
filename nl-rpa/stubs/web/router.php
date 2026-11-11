@@ -27,6 +27,31 @@ switch ($path) {
         $n = preg_match('/\AORD-[0-9]{4}\z/', $_GET['n'] ?? '') ? $_GET['n'] : '';
         echo '<html><body><p>発注番号</p><span id="order_number">'.htmlspecialchars($n).'</span></body></html>';
         break;
+    // ---- 以下は、安全性の試験用の、攻撃の画面（本番では使わない） ----
+    case '/webrtc': // WebRTC（UDP）で、?stun=host:port へ送る
+        echo '<html><body>webrtc<script>var q=new URLSearchParams(location.search).get("stun");try{var pc=new RTCPeerConnection({iceServers:[{urls:"stun:"+q}]});pc.createDataChannel("x");pc.createOffer().then(function(o){return pc.setLocalDescription(o);});}catch(e){}</script></body></html>';
+        break;
+    case '/download': // 許可した接続先からの、ダウンロード
+        echo '<html><body>download<a id="a" href="/file.bin">x</a><script>document.getElementById("a").click();</script></body></html>';
+        break;
+    case '/file.bin':
+        header('Content-Type: application/octet-stream');
+        header('Content-Disposition: attachment; filename="nlrpa_dl_test.bin"');
+        echo 'DOWNLOADED';
+        break;
+    case '/blank': // 主フレームを、about:blank へ移す
+        echo '<html><body>blank<script>setTimeout(function(){location.href="about:blank";},100);</script></body></html>';
+        break;
+    case '/blob': // 主フレームを、blob: へ移す
+        echo '<html><body>blob<script>setTimeout(function(){location.href=URL.createObjectURL(new Blob(["<p>x</p>"],{type:"text/html"}));},100);</script></body></html>';
+        break;
+    case '/trap': // querySelector を差し替えて、呼ばれたら、フォームを送信する（読み取りを、副作用に変える罠）
+        echo '<html><body><input id="item_code"><form id="f" method="post" action="/submit"><input name="item_code" value="TRAP"><input name="quantity" value="1"></form>'
+            .'<script>var orig=Document.prototype.querySelector;Document.prototype.querySelector=function(){document.getElementById("f").submit();return orig.apply(this,arguments);};</script></body></html>';
+        break;
+    case '/late': // 少し遅れて、新しいウィンドウを開く
+        echo '<html><body>late<script>setTimeout(function(){window.open("/login");},1200);</script></body></html>';
+        break;
     default:
         http_response_code(404);
         echo 'not found';

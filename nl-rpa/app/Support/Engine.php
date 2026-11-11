@@ -136,9 +136,10 @@ final class Engine
     public function profileNotifier(): \Closure
     {
         $pid = getmypid();
+        $start = ProcessInfo::startTime($pid);
 
-        return function (string $event, string $dir) use ($pid): void {
-            $event === 'created' ? $this->store->registerProfile($dir, $pid) : $this->store->unregisterProfile($dir);
+        return function (string $event, string $dir) use ($pid, $start): void {
+            $event === 'created' ? $this->store->registerProfile($dir, $pid, $start) : $this->store->unregisterProfile($dir);
         };
     }
 

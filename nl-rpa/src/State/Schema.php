@@ -95,7 +95,10 @@ final class Schema
         $pdo->exec('CREATE TABLE IF NOT EXISTS browser_profiles (
             dir TEXT PRIMARY KEY,
             worker_pid INTEGER NOT NULL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            proc_start TEXT
         )');
+        $pcols = array_column($pdo->query('PRAGMA table_info(browser_profiles)')->fetchAll(), 'name');
+        in_array('proc_start', $pcols, true) || $pdo->exec('ALTER TABLE browser_profiles ADD COLUMN proc_start TEXT');
     }
 }

@@ -20,7 +20,11 @@ use Src\Guard\Redeemed;
  *  - 新しいウィンドウ・タブが開いたら、検知して、閉じ、停止する（SEC-5）
  *  - 想定外の確認ダイアログは、閉じて、停止する
  *  - 実行ごとに、使い捨ての専用プロファイルで起動し、終了時に破棄する。プロファイルの場所は、呼び出し側（app）に通知する（異常終了のあとの後始末のため）
- *  - ブラウザで実行するJavaScriptは、固定の文字列だけ。値は、引数で渡す（SEC-11）
+ *  - ブラウザで実行するJavaScriptは、固定の文字列だけ。値は、引数で渡す（SEC-11）。ページのJavaScriptから隔離された環境（isolated world）で
+ *    実行する（ページが、document.querySelector などを差し替えて、読み取りを副作用に変えるのを防ぐ）
+ *  - ダウンロードは、拒否して、検知する。使い捨てプロファイルの外（~/Downloads など）に、保存させない
+ *  - 主フレームが、許可した接続先の外（about:blank、blob: などを含む）へ移ったら、停止する
+ *  - 起動時に、Chromeのバージョンを記録し、許可したメジャーバージョンの外なら停止する（仕様14-2）
  *  - 取り消せない操作は、performIrreversible だけ。操作の瞬間に、自分で持つ Guard で、証明を照合し直す。対象は、検査した時点の手順から取る
  * 異常（遮断した通信、新しいウィンドウ、ダイアログ）は、例外にする。Runner は、例外を「停止」として扱う。
  */
@@ -35,6 +39,9 @@ final class ChromeBrowser implements BrowserPort
     /** @var list<string> 開いた新しいターゲット（ウィンドウ・タブ） */
     private array $newTargets = [];
     private ?string $dialog = null;
+    private ?string $chromeVersion = null;
+    /** @var list<string> 閉じるときに、まだ確かめていなかった異常（最後の操作のあとに起きたもの） */
+    private array $unseenAtClose = [];
 
     /**
      * @param array<string,string> $pageUrls  画面の記録の「画面名 => URL」。許可した接続先の中だけ。'start' が、開始画面
@@ -50,8 +57,11 @@ final class ChromeBrowser implements BrowserPort
         private readonly IrreversibleGuard $guard,
         private readonly string $destination = 'stub',
         private readonly string $environment = 'chrome',
+        /** サンドボックスの無効化。接続先の制限とは無関係で、rootで動かす環境のためだけの指定（ChromeがrootでのSandbox起動を拒否するため） */
         private readonly bool $noSandbox = false,
         private readonly ?\Closure $onProfile = null,
+        /** @var list<int>|null 許可するChromeのメジャーバージョン。null＝確認しない（1bの前に、docs/TECH_STACK.md の範囲に決める） */
+        private readonly ?array $allowedMajorVersions = null,
     ) {
         foreach ($pageUrls as $name => $url) {
             if (! $policy->allows($url)) {
@@ -87,6 +97,7 @@ final class ChromeBrowser implements BrowserPort
         $this->profileDir = $dir;
         $this->onProfile && ($this->onProfile)('created', $dir);
         try {
+            $this->seedPreferences($dir);
             $this->browser = (new BrowserFactory($this->chromeBinary))->createBrowser([
                 'headless' => true,
                 'noSandbox' => $this->noSandbox,
@@ -95,6 +106,20 @@ final class ChromeBrowser implements BrowserPort
                 'customFlags' => $this->policy->flags(),
             ]);
             $conn = $this->browser->getConnection();
+            // バージョンの記録と確認（仕様14-2）
+            $ver = $conn->sendMessageSync(new Message('Browser.getVersion'), 5000);
+            $this->chromeVersion = (string) $ver->getResultData('product');
+            if ($this->allowedMajorVersions !== null) {
+                $major = preg_match('/\/(\d+)\./', $this->chromeVersion, $m) ? (int) $m[1] : -1;
+                if (! in_array($major, $this->allowedMajorVersions, true)) {
+                    throw new \RuntimeException("Chromeのバージョンが、許可した範囲の外です: {$this->chromeVersion}");
+                }
+            }
+            // ダウンロードは、拒否して、検知する（使い捨てプロファイルの外へ、保存させない）
+            $conn->sendMessageSync(new Message('Browser.setDownloadBehavior', ['behavior' => 'deny', 'eventsEnabled' => true]), 5000);
+            $conn->on('method:Browser.downloadWillBegin', function (array $p): void {
+                $this->violations[] = 'ダウンロードを拒否しました: '.(string) ($p['url'] ?? '?');
+            });
             $this->page = $this->browser->createPage();
             $this->mainTargetId = $this->page->getSession()->getTargetId();
             // これ以降に作られた「ページ」は、新しいウィンドウ・タブ（SEC-5：開いたら、停止）
@@ -113,6 +138,13 @@ final class ChromeBrowser implements BrowserPort
                     $session->sendMessage(new Message('Fetch.failRequest', ['requestId' => $p['requestId'], 'errorReason' => 'BlockedByClient']));
                 }
             });
+            // 主フレームが、許可した接続先の外（about:blank、blob:、data: などを含む）へ移ったら、停止する
+            $session->on('method:Page.frameNavigated', function (array $p): void {
+                $f = $p['frame'] ?? [];
+                if (! isset($f['parentId']) && ! $this->policy->allows((string) ($f['url'] ?? ''))) {
+                    $this->violations[] = '許可していない画面へ移りました: '.(string) ($f['url'] ?? '?');
+                }
+            });
             $session->on('method:Page.javascriptDialogOpening', function (array $p) use ($session): void {
                 $this->dialog = (string) ($p['message'] ?? '');
                 $session->sendMessage(new Message('Page.handleJavaScriptDialog', ['accept' => false])); // 閉じる（OKはしない）
@@ -124,6 +156,29 @@ final class ChromeBrowser implements BrowserPort
         }
 
         return $this->page;
+    }
+
+    /**
+     * 使い捨てプロファイルの設定を、起動の前に書く（SEC-3）。
+     *  - WebRTC：プロキシを通らないUDPを、禁止する（起動オプションだけでは、UDPが外へ届いた）
+     *  - パスワードの保存・自動入力・セーフブラウジングを、無効にする
+     *  - ダウンロードの保存先は、プロファイルの中にする（既定の ~/Downloads に、保存させない。拒否も、別に行う）
+     */
+    private function seedPreferences(string $dir): void
+    {
+        $default = $dir.'/Default';
+        mkdir($default, 0700);
+        $prefs = [
+            'webrtc' => ['ip_handling_policy' => 'disable_non_proxied_udp', 'multiple_routes_enabled' => false, 'nonproxied_udp_enabled' => false],
+            'credentials_enable_service' => false,
+            'profile' => ['password_manager_enabled' => false],
+            'autofill' => ['profile_enabled' => false, 'credit_card_enabled' => false],
+            'safebrowsing' => ['enabled' => false],
+            'download' => ['prompt_for_download' => false, 'default_directory' => $dir.'/downloads'],
+            'savefile' => ['default_directory' => $dir.'/downloads'],
+        ];
+        file_put_contents($default.'/Preferences', json_encode($prefs, JSON_THROW_ON_ERROR));
+        @chmod($default.'/Preferences', 0600);
     }
 
     /** イベントを処理しながら、待つ。chrome-php は、読み取りのときに、イベントを配る */
@@ -172,14 +227,40 @@ final class ChromeBrowser implements BrowserPort
         return $this->selectors[$element] ?? throw new \RuntimeException("画面の記録にない要素です: {$element}");
     }
 
-    /** 固定のJavaScriptを、値を引数で渡して、実行する（文字列を連結して作らない。SEC-11） */
+    /**
+     * 固定のJavaScriptを、値を引数で渡して、実行する（文字列を連結して作らない。SEC-11）。
+     * ページのJavaScriptから隔離された環境で実行する（ページが差し替えた関数は、見えない）。前後で、異常がないかを確かめる。
+     */
     private function call(string $fixedFunction, array $args = []): mixed
     {
-        $page = $this->ensure();
-        $r = $page->callFunction($fixedFunction, $args)->getReturnValue(10000);
+        $this->ensure();
+        $this->assertClean(); // 実行の前にも、確かめる（溜まった異常を、持ち越して、操作しない）
+        $r = $this->isolated($fixedFunction, $args);
         $this->assertClean();
 
         return $r;
+    }
+
+    private function isolated(string $fixedFunction, array $args): mixed
+    {
+        $page = $this->ensure();
+        $session = $page->getSession();
+        $frameId = $page->getFrameManager()->getMainFrame()->getFrameId();
+        $ctx = $session->sendMessageSync(new Message('Page.createIsolatedWorld', ['frameId' => $frameId, 'worldName' => 'nlrpa-engine', 'grantUniveralAccess' => false]), 10000)->getResultData('executionContextId');
+        $resp = $session->sendMessageSync(new Message('Runtime.callFunctionOn', [
+            'functionDeclaration' => $fixedFunction,
+            'arguments' => array_map(static fn ($a) => ['value' => $a], $args),
+            'executionContextId' => $ctx,
+            'awaitPromise' => false,
+            'returnByValue' => true,
+            'userGesture' => true,
+        ]), 10000);
+        $ex = $resp->getResultData('exceptionDetails');
+        if (is_array($ex)) {
+            throw new \RuntimeException('JavaScriptの実行に失敗しました: '.(string) ($ex['exception']['description'] ?? $ex['text'] ?? '?'));
+        }
+
+        return $resp->getResultData('result')['value'] ?? null;
     }
 
     private function waitLoaded(): void
@@ -188,7 +269,7 @@ final class ChromeBrowser implements BrowserPort
         $this->pump(0.4);
         while (microtime(true) < $end) {
             try {
-                if ($this->ensure()->evaluate('document.readyState')->getReturnValue(2000) === 'complete') {
+                if ($this->isolated('function () { return document.readyState; }', []) === 'complete') {
                     break;
                 }
             } catch (\Throwable) {
@@ -277,6 +358,8 @@ final class ChromeBrowser implements BrowserPort
 
     public function performIrreversible(Redeemed $proof, array $rowValues): void
     {
+        $this->ensure();
+        $this->assertClean(); // 取り消せない操作の直前に、溜まった異常（遅れて開いたウィンドウ・遮断した通信）がないかを確かめる
         $this->guard->assertRedeemed($proof); // 操作の瞬間に、自分で持つ Guard で、証明を照合し直す（使い捨て）
         $step = $proof->permit->step();       // 検査した時点の手順。呼び出し側は、対象を指定できない
         $target = (string) ($step->target ?? '');
@@ -304,6 +387,9 @@ final class ChromeBrowser implements BrowserPort
 
     public function close(): void
     {
+        $this->pump(0.05);
+        $unseen = [...$this->violations, ...array_map(static fn (string $t): string => '新しいウィンドウ:'.$t, $this->newTargets)];
+        $this->unseenAtClose = $unseen;
         try {
             $this->browser?->close();
         } catch (\Throwable) {
@@ -317,6 +403,18 @@ final class ChromeBrowser implements BrowserPort
             self::removeDir($dir);
             $this->onProfile && ($this->onProfile)('removed', $dir);
         }
+    }
+
+    /** 起動したChromeのバージョン（例：HeadlessChrome/153.0.8010.12）。起動前は null */
+    public function chromeVersion(): ?string
+    {
+        return $this->chromeVersion;
+    }
+
+    /** @return list<string> close() の時点で、確かめていなかった異常。呼び出し側が、記録に残せる */
+    public function unseenAtClose(): array
+    {
+        return $this->unseenAtClose;
     }
 
     public function profileDir(): ?string

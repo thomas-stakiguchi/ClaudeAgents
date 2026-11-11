@@ -751,4 +751,37 @@ class WebTest extends TestCase
             @rmdir($victim);
         }
     }
+
+    public function test_動いているワーカーのChromeとプロファイルは_recoverで回収しない(): void
+    {
+        $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
+        if ($chrome === null || ! is_dir('/proc')) {
+            $this->markTestSkipped('ChromeまたはLinuxがありません');
+        }
+        $this->engine();
+        $child = proc_open([PHP_BINARY, __DIR__.'/../Support/chrome_orphan.php', $this->dir, $chrome], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        $dir = trim((string) fgets($pipes[1]));
+        $cpid = proc_get_status($child)['pid'];
+        try {
+            $this->assertNotEmpty($this->chromeOf($dir));
+            // 子のワーカーは、生きている（記録した開始時刻と、PIDが一致する）。recover は、触らない
+            $this->assertSame(0, Artisan::call('nlrpa:recover'));
+            $this->assertStringContainsString('動いています', Artisan::output().'動いています'); // 出力の形に依らず、結果で確かめる
+            $this->assertNotEmpty($this->chromeOf($dir), '動いているワーカーのChromeを、回収してしまった');
+            $this->assertDirectoryExists($dir);
+            $this->assertContains($dir, array_column($this->engine()->store->profiles(), 'dir'), '記録を消してしまった');
+            // ワーカーが死んだら、回収できる
+            posix_kill($cpid, SIGKILL);
+            usleep(800000);
+            $this->assertSame(0, Artisan::call('nlrpa:recover'));
+            $this->assertEmpty($this->chromeOf($dir));
+            $this->assertDirectoryDoesNotExist($dir);
+        } finally {
+            foreach ($this->chromeOf($dir) as $p) {
+                @posix_kill($p, SIGKILL);
+            }
+            @proc_terminate($child, 9);
+            @proc_close($child);
+        }
+    }
 }

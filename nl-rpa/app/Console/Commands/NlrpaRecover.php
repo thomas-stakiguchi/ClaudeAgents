@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Support\Engine;
+use App\Support\ProcessInfo;
 use Illuminate\Console\Command;
 
 /** 異常終了のあとの後始末（14-3の5）。ロックを取ってから、「処理中」を「要確認」に、「実行中」の要求を「異常終了」にする */
@@ -23,11 +24,22 @@ class NlrpaRecover extends Command
         try {
             $n = $e->states->recoverAfterCrash();
             $m = $e->store->failStaleRunning();
+            // 記録したワーカーのうち、PIDと開始時刻が一致して、今も動いているもの（実行の合間に、ブラウザを持ったまま待っているなど）は、触らない
+            $live = [];
             foreach ($e->store->workers() as $w) {
-                $e->store->unregisterWorker($w['pid']);
+                if ($w['proc_start'] !== null && ProcessInfo::startTime($w['pid']) === $w['proc_start'] && ProcessInfo::isAlive($w['pid'])) {
+                    $live[$w['pid']] = true;
+                    $this->warn("PID {$w['pid']} のワーカーは、動いています。触りません");
+                } else {
+                    $e->store->unregisterWorker($w['pid']);
+                }
             }
-            // ロックを取っているので、動いているワーカーはいない。残った使い捨てプロファイルと、孤児のChromeを回収する
-            $profiles = $e->store->profiles();
+            // 残った使い捨てプロファイルと、孤児のChromeを回収する（動いているワーカーのものは除く）
+            $profiles = array_values(array_filter($e->store->profiles(), static function (array $p) use ($live): bool {
+                $alive = isset($live[$p['worker_pid']]) || ($p['proc_start'] !== null && ProcessInfo::startTime($p['worker_pid']) === $p['proc_start'] && ProcessInfo::isAlive($p['worker_pid']));
+
+                return ! $alive;
+            }));
             $r = \App\Support\ProfileCleaner::clean($e->profileRoot(), array_column($profiles, 'dir'));
             foreach ($profiles as $p) {
                 in_array($p['dir'], $r['skipped'], true) || $e->store->unregisterProfile($p['dir']);

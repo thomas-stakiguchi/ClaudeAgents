@@ -56,8 +56,20 @@ final class ProfileCleaner
             }
         }
         $targets = array_values(array_unique($targets));
-        foreach ($targets as $pid) {
-            @posix_kill($pid, SIGSTOP);
+        // 止めて（増えないようにして）、子孫を数え直す。変わらなくなるまで繰り返してから、終了する
+        for ($i = 0; $i < 10 && $targets !== []; $i++) {
+            foreach ($targets as $pid) {
+                @posix_kill($pid, SIGSTOP);
+            }
+            $next = $targets;
+            foreach ($targets as $pid) {
+                array_push($next, ...ProcessInfo::descendants($pid));
+            }
+            $next = array_values(array_unique($next));
+            if (count($next) === count($targets)) {
+                break;
+            }
+            $targets = $next;
         }
         foreach ($targets as $pid) {
             @posix_kill($pid, SIGKILL);
