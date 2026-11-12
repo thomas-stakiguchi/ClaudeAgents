@@ -407,9 +407,17 @@ final class ChromeBrowser implements BrowserPort
         // 使い捨てのプロファイルを、破棄する（SEC-3）。置き場の中にあるものだけを消す
         $dir = $this->profileDir;
         $this->profileDir = null;
+        // Chromeの終了を待つ。待たずに消すと、まだ動いている子プロセスが、消したディレクトリを、作り直す（実測）。
+        // 2秒待っても残っているものは、終了させる（「--user-data-dir=ディレクトリ」と、引数が完全に一致するプロセスだけ）
+        $dir !== null && self::waitChromeExit($dir, 2.0);
         if ($dir !== null && str_starts_with($dir, rtrim($this->profileRoot, '/').'/profile-') && is_dir($dir)) {
             self::removeDir($dir);
-            $this->onProfile && ($this->onProfile)('removed', $dir);
+            if (is_dir($dir)) { // Chromeの終了処理が、まだ書き込んでいると、消し残る。少し待って、もう一度
+                usleep(400000);
+                self::removeDir($dir);
+            }
+            // 消せたときだけ、「破棄した」と通知する。消し残ったら、記録を残す（あとで、回収が、片付ける）
+            ! is_dir($dir) && $this->onProfile && ($this->onProfile)('removed', $dir);
         }
     }
 
@@ -423,6 +431,46 @@ final class ChromeBrowser implements BrowserPort
     public function unseenAtClose(): array
     {
         return $this->unseenAtClose;
+    }
+
+    /** @return list<int> 引数「--user-data-dir=DIR」が、完全に一致する、生きているプロセス（Linuxの /proc のみ。ほかのOSでは、空） */
+    private static function chromePids(string $dir): array
+    {
+        if (! is_dir('/proc')) {
+            return [];
+        }
+        $out = [];
+        foreach (glob('/proc/[0-9]*/cmdline') ?: [] as $f) {
+            $cmd = @file_get_contents($f);
+            if (! is_string($cmd) || ! in_array('--user-data-dir='.$dir, explode("\0", rtrim($cmd, "\0")), true)) {
+                continue;
+            }
+            $pid = (int) basename(dirname($f));
+            $stat = @file_get_contents('/proc/'.$pid.'/stat');
+            // ゾンビ（Z）や、終了中（X）は、生きていないものとして扱う。プロセス名に ')' が入っていても、最後の ')' のあとから読む
+            if (is_string($stat) && ($c = strrpos($stat, ')')) !== false && ! in_array(trim(substr($stat, $c + 1))[0] ?? '', ['Z', 'X'], true)) {
+                $out[] = $pid;
+            }
+        }
+
+        return $out;
+    }
+
+    private static function waitChromeExit(string $dir, float $sec): void
+    {
+        $end = microtime(true) + $sec;
+        while (self::chromePids($dir) !== [] && microtime(true) < $end) {
+            usleep(50000);
+        }
+        if (function_exists('posix_kill')) {
+            foreach (self::chromePids($dir) as $pid) {
+                @posix_kill($pid, SIGKILL);
+            }
+            $end = microtime(true) + 1.0;
+            while (self::chromePids($dir) !== [] && microtime(true) < $end) {
+                usleep(50000);
+            }
+        }
     }
 
     public function profileDir(): ?string

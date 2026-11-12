@@ -52,6 +52,22 @@
   @else <p><span class="badge good">初回の1件は確認済みです</span></p> @endif
 </div>
 
+<h2>結果（画面から読んだ値）</h2>
+<div class="card">
+  <p><a href="/runs/{{ $run['run_id'] }}/result.csv">結果をCSVでダウンロード</a> <small>（業務キー、手順ごとの状態、画面から読んだ値）</small></p>
+  @if (count($latest) === 0) <p>まだ、結果がありません。</p> @else
+  <table><tr><th>業務キー</th><th>状態</th>@foreach ($readKeys as $k)<th>読んだ値：{{ $k }}</th>@endforeach</tr>
+  @foreach ($latest as $key => $row)
+  <tr><td>{{ $key }}</td><td>{{ $row['status'] }}</td>@foreach ($readKeys as $k)<td>{{ $row['reads'][$k] ?? '' }}</td>@endforeach</tr>
+  @endforeach</table>
+  @endif
+</div>
+
+@if (count($stepRows) > 0)
+<h2>手順ごとの確認条件の合否（最新の実行）</h2>
+@include('partials.step_results', ['rows' => $stepRows, 'limit' => 10])
+@endif
+
 @if ($browserMode === 'chrome')
 <h2>スタブの画面に記録された発注（新しい順）</h2>
 <div class="card">

@@ -581,4 +581,73 @@ class RunnerTest extends TestCase
         $this->assertSame(RunReport::HALTED, $r2->status);
         $this->assertCount($orders, $this->browser->orders());
     }
+
+    // ---- 手順ごとの確認条件の合否（5章の7） ----
+
+    public function test_ドライランと本番の結果に_手順ごとの確認条件の合否が残る(): void
+    {
+        $this->approve('plan');
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $steps = $dry->rows[0]['steps'];
+        $this->assertSame(['S-007', 'S-003', 'S-004', 'S-005'], array_column($steps, 'id'), 'ドライランは、取り消せない操作の手前まで');
+        $this->assertSame([true, true, true, true], array_column($steps, 'ok'));
+        $this->assertStringContainsString('手前で停止', end($steps)['note']);
+        $this->assertSame('value_matches：商品コード', $steps[1]['verify']);
+
+        $this->approve('final');
+        $this->assertSame([], $this->registrar->register('RUN-1', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $steps = $r->rows[0]['steps'];
+        $this->assertSame(['S-007', 'S-003', 'S-004', 'S-005', 'S-006'], array_column($steps, 'id'));
+        $this->assertSame(['open_url', 'type_text', 'type_text', 'click', 'read_text'], array_column($steps, 'action'));
+        $this->assertStringContainsString('実行し', $steps[3]['note']);
+        $this->assertTrue($steps[3]['ok']);
+    }
+
+    public function test_確認条件を満たさなかった手順は_不合格として残る(): void
+    {
+        $this->approve('plan');
+        $this->browser->typedValueTransform = fn (string $v): string => $v.'X';
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::HALTED, $dry->status);
+        $steps = $dry->rows[0]['steps'];
+        $last = end($steps);
+        $this->assertSame('S-003', $last['id']);
+        $this->assertFalse($last['ok']);
+        $this->assertSame('halted', $dry->rows[0]['status']);
+    }
+
+    public function test_条件分岐の結果も残る(): void
+    {
+        $this->plan = $this->branchPlan();
+        $this->rows = [['商品コード' => 'ZZZ', '数量' => '1', '伝票番号' => 'K-001'], ['商品コード' => 'DEF', '数量' => '30', '伝票番号' => 'K-002']];
+        $b = $this->browser;
+        $b->textVisibleOverride = fn (string $text, bool $real): bool => $text === '発注入力' && $b->readValueOrEmpty('item_code') === 'ZZZ' ? false : $real;
+        $this->approve('plan');
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $ifs = array_values(array_filter($dry->rows[0]['steps'], fn ($s) => $s['action'] === 'if'));
+        $this->assertCount(1, $ifs);
+        $this->assertFalse($ifs[0]['ok']);
+        $this->assertSame('else', $ifs[0]['note']);
+        $ifs2 = array_values(array_filter($dry->rows[1]['steps'], fn ($s) => $s['action'] === 'if'));
+        $this->assertSame('then', $ifs2[0]['note']);
+    }
+
+    public function test_行ごとの結果は_次の行の処理で書き換わらない(): void
+    {
+        $this->prepareRun();
+        $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        // 1行目は、前の呼び出しで成功済み（skipped）。2・3行目の、発注番号が、それぞれ違う
+        $this->assertSame(['skipped', 'done', 'done'], array_column($r->rows, 'status'));
+        $this->assertSame('ORD-0002', $r->rows[1]['reads']['order_number']);
+        $this->assertSame('ORD-0003', $r->rows[2]['reads']['order_number']);
+        $this->assertNotSame($r->rows[1]['steps'], [], '手順の結果が、空');
+        $this->assertSame(5, count($r->rows[1]['steps']));
+        $this->assertSame(5, count($r->rows[2]['steps']));
+        // 行ごとの結果が、別の配列であること（同じ参照を、共有していない）
+        $r->rows[1]['steps'][0]['id'] = 'CHANGED';
+        $this->assertSame('S-007', $r->rows[2]['steps'][0]['id']);
+    }
 }

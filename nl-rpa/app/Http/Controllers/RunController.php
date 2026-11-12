@@ -40,7 +40,28 @@ class RunController extends Controller
             $requests[] = $q;
         }
 
+        // 業務キーごとの、最新の結果（新しい要求から順に見て、最初に見つかったもの）と、最新の要求の手順ごとの結果
+        $latest = [];
+        $stepRows = null;
+        foreach ($requests as $q) {
+            foreach ($q['result']['rows'] ?? [] as $row) {
+                $latest[$row['business_key']] ??= $row;
+            }
+            if ($stepRows === null && ! empty($q['result']['rows'])) {
+                $stepRows = $q['result']['rows'];
+            }
+        }
+        $readKeys = [];
+        foreach ($latest as $row) {
+            foreach (array_keys($row['reads'] ?? []) as $k) {
+                $readKeys[$k] = true;
+            }
+        }
+
         return view('runs.show', $d + [
+            'latest' => $latest,
+            'readKeys' => array_keys($readKeys),
+            'stepRows' => $stepRows ?? [],
             'table' => $table,
             'requests' => $requests,
             'browserMode' => $e->browserMode(),
@@ -48,6 +69,53 @@ class RunController extends Controller
             'firstConfirmed' => $e->ledger->latest('first_row_confirmed', $runId) !== null,
             'rec' => $e->ledger->latest('run', $runId),
         ]);
+    }
+
+    /**
+     * 結果のCSV（5章の10）。業務キー、手順ごとの状態、画面から読んだ値。
+     * 値が「=」「+」「-」「@」、タブ、CRで始まる場合は、先頭に「'」を付けて、表計算ソフトで、式として実行されないようにする（SEC-14）。
+     */
+    public function csv(string $runId)
+    {
+        $d = $this->load($runId);
+        $reqs = $this->engine->store->requestsOfRun($runId, 50);
+        $latest = [];
+        foreach ($reqs as $q) {
+            $res = $q['result_json'] ? json_decode($q['result_json'], true) : null;
+            foreach ($res['rows'] ?? [] as $row) {
+                $latest[$row['business_key']] ??= $row;
+            }
+        }
+        $readKeys = [];
+        foreach ($latest as $row) {
+            foreach (array_keys($row['reads'] ?? []) as $k) {
+                $readKeys[$k] = true;
+            }
+        }
+        $readKeys = array_keys($readKeys);
+        $names = ['succeeded' => '成功', 'failed' => '失敗', 'needs_review' => '要確認', 'processing' => '処理中', null => '未実行'];
+        $safe = static fn (string $v): string => preg_match('/\A[=+\-@\t\r]/', $v) ? "'".$v : $v;
+        $header = array_merge(['業務キー'], array_map(fn ($sid) => "状態 {$sid}", $d['irr']), array_map(fn ($k) => "読んだ値 {$k}", $readKeys));
+        $lines = [$header];
+        foreach ($d['rows'] as $r) {
+            $row = [$r->business_key];
+            foreach ($d['irr'] as $sid) {
+                $row[] = $names[$this->engine->states->get($r->business_key, $sid)] ?? '?';
+            }
+            foreach ($readKeys as $k) {
+                $row[] = (string) ($latest[$r->business_key]['reads'][$k] ?? '');
+            }
+            $lines[] = $row;
+        }
+
+        return response()->streamDownload(function () use ($lines, $safe): void {
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF"); // Excelで、UTF-8として開けるように
+            foreach ($lines as $line) {
+                fputcsv($out, array_map(fn ($v) => $safe((string) $v), $line), ',', '"', '');
+            }
+            fclose($out);
+        }, $runId.'_result.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
     /** 実行の要求を作る（実行そのものは、ワーカーがコンソールで行う）。同じ実行に、待ち・実行中の要求があれば、作らない */

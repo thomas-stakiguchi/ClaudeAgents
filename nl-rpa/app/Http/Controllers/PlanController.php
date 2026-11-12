@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Support\Engine;
+use App\Support\PlanDiff;
 use App\Support\PlanPresenter;
 use Illuminate\Http\Request;
 use Src\Ai\AiPlanGate;
@@ -49,6 +50,46 @@ class PlanController extends Controller
             : '許可リスト・個別登録が、この計画を作ったときから変わっています。計画を作り直して、あらためて承認してください';
     }
 
+    /** 比べる相手の既定：最新の「最終承認がある」古い計画。なければ、直前の（古い）計画。なければ null */
+    private function previousPlanHash(string $hash): ?string
+    {
+        $all = $this->engine->store->listPlans(); // 新しい順
+        $idx = null;
+        foreach ($all as $i => $row) {
+            if ($row['hash'] === $hash) {
+                $idx = $i;
+                break;
+            }
+        }
+        if ($idx === null) {
+            return null;
+        }
+        $older = array_slice($all, $idx + 1);
+        foreach ($older as $row) {
+            if ($this->engine->approvals->hasAnyFinalApproval($row['hash'])) {
+                return $row['hash'];
+            }
+        }
+
+        return $older[0]['hash'] ?? null;
+    }
+
+    /** 2つの計画の差分（R3）。比べる相手は、?against= で指定（既定は、前の計画） */
+    public function diff(Request $request, string $hash)
+    {
+        $new = $this->engine->store->getPlan($hash) ?? abort(404);
+        $againstQ = $request->query('against');
+        $against = is_string($againstQ) && preg_match('/\Asha256:[0-9a-f]{64}\z/', $againstQ) ? $againstQ : $this->previousPlanHash($hash);
+        $old = $against !== null ? $this->engine->store->getPlan($against) : null;
+        $changes = $old !== null ? PlanDiff::compare($old['plan'], $old['inputs'], $new['plan'], $new['inputs']) : [];
+
+        return view('plans.diff', [
+            'p' => $new, 'old' => $old, 'changes' => $changes,
+            'oldApproved' => $old !== null && $this->engine->approvals->hasAnyFinalApproval($old['hash']),
+            'others' => array_values(array_filter($this->engine->store->listPlans(), fn ($r) => $r['hash'] !== $hash)),
+        ]);
+    }
+
     public function show(string $hash)
     {
         $e = $this->engine;
@@ -58,7 +99,21 @@ class PlanController extends Controller
             $dry[] = (array) $d;
         }
 
+        $prev = $this->previousPlanHash($hash);
+        $prevPlan = $prev !== null ? $e->store->getPlan($prev) : null;
+        $changes = $prevPlan !== null ? PlanDiff::compare($prevPlan['plan'], $prevPlan['inputs'], $p['plan'], $p['inputs']) : [];
+        $requests = [];
+        foreach ($e->store->requestsOf($hash) as $q) {
+            $q['result'] = $q['result_json'] ? json_decode($q['result_json'], true) : null;
+            $requests[] = $q;
+        }
+
         return view('plans.show', [
+            'columns' => $p['plan']->input->columns,
+            'prevHash' => $prev,
+            'prevApproved' => $prev !== null && $e->approvals->hasAnyFinalApproval($prev),
+            'changeCount' => count($changes),
+            'importantCount' => count(array_filter($changes, fn ($c) => $c['important'])),
             'stale' => $this->staleError($p),
             'p' => $p,
             'steps' => PlanPresenter::steps($p['plan'], $p['inputs']),
@@ -67,7 +122,7 @@ class PlanController extends Controller
             'finalApproved' => $e->approvals->hasAnyFinalApproval($hash),
             'dryRuns' => array_reverse($dry),
             'passedDryRuns' => array_values(array_filter($dry, fn ($d) => ($d['result'] ?? null) === 'passed')),
-            'requests' => $e->store->requestsOf($hash),
+            'requests' => $requests,
             'runs' => $e->store->runsOfPlan($hash),
             'inputSets' => $e->store->listInputSets(),
         ]);
@@ -148,6 +203,7 @@ class PlanController extends Controller
         return view('plans.preview', [
             'p' => $p, 'set' => $set, 'dryRunId' => (is_string($request->query('dry_run_id')) ? $request->query('dry_run_id') : ''),
             'sum' => RunRegistrar::summarize($p['plan'], $set['rows']),
+            'keyColumn' => collect($p['plan']->input->columns)->first(fn ($c) => ($c->role ?? null) === 'business_key')->name ?? '',
             'limits' => $p['plan']->limits,
         ]);
     }

@@ -4,6 +4,7 @@
 <p><a href="/plans/{{ $p['hash'] }}">← 実行計画</a></p>
 <h1>実行前のプレビュー</h1>
 <div class="card">
+  <strong>業務キーの列：「{{ $keyColumn }}」</strong>（この列の値で、二重実行を防ぎます）<br>
   入力データ：番号{{ $set['id'] }}（<code>{{ $set['sha256'] }}</code>）<br>
   <strong>件数：{{ $sum['rows'] }}</strong>（上限 {{ $limits->max_rows_per_run ?? '—' }}）<br>
   <strong>数量の合計：{{ $sum['quantity'] }}</strong>（上限 {{ $limits->max_quantity_per_run ?? '—' }}）<br>

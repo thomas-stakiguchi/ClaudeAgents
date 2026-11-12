@@ -22,6 +22,25 @@
 <h2>シナリオ（元の文）</h2>
 <div class="card"><pre>{{ $p['scenario'] }}</pre></div>
 
+<h2>入力データの列（業務キーの列）</h2>
+<div class="card">
+  <p><small>業務キーは、入力データの1行を見分ける番号です。同じ業務キーの操作は、二重に実行しません（9-4）。計画の列定義で、<strong>業務キーの列</strong>が決まります。入力データのCSVは、この列名を、すべて持っていなければ、登録できません。</small></p>
+  <table><tr><th>列名</th><th>型</th><th>必須</th><th>役割</th></tr>
+  @foreach ($columns as $c)
+  <tr class="{{ ($c->role ?? '') === 'business_key' ? 'irr' : '' }}"><td>{{ $c->name }}</td><td>{{ $c->type }}</td><td>{{ $c->required ? '必須' : '' }}</td>
+  <td>@php($roles = ['business_key' => '業務キー（二重実行の防止に使う）', 'quantity' => '数量（上限の対象）', 'amount' => '金額（上限の対象）', 'personal_info' => '個人情報（マスクの対象）'])
+  {{ $roles[$c->role ?? ''] ?? '' }}</td></tr>
+  @endforeach</table>
+</div>
+
+<h2>前の計画との差分</h2>
+<div class="card">
+  @if ($prevHash === null) <p>比べる、前の計画は、ありません。</p> @else
+    <p>前の計画 <code>{{ substr($prevHash, 0, 23) }}…</code>@if ($prevApproved)（最終承認済み）@endif との差分：<strong>{{ $changeCount }}</strong> 件（重要 <strong>{{ $importantCount }}</strong> 件）。
+       <a href="/plans/{{ $p['hash'] }}/diff">差分を見る</a></p>
+  @endif
+</div>
+
 <h2>手順（実行エンジンが、計画から機械的に作った説明）</h2>
 <p><small>赤い行は、<strong>取り消せない操作</strong>です（実行エンジンが計算します。印は、外せません）。「AIが補った」は、シナリオに根拠がない手順です。AIが書いた説明は、参考として右端に出しています。</small></p>
 <table>
@@ -68,7 +87,13 @@
   @endif
   @if (count($requests) > 0)
   <table><tr><th>要求</th><th>種類</th><th>状態</th><th>結果</th></tr>
-  @foreach ($requests as $q)<tr><td>{{ $q['id'] }}</td><td>{{ $q['kind'] }}</td><td>{{ $q['status'] }}</td><td>@if ($q['result_json']) {{ json_decode($q['result_json'], true)['status'] ?? '' }} @endif</td></tr>@endforeach</table>
+  @foreach ($requests as $q)<tr><td>{{ $q['id'] }}</td><td>{{ $q['kind'] }}</td><td>{{ $q['status'] }}</td><td>{{ $q['result']['status'] ?? '' }}</td></tr>@endforeach</table>
+  @foreach ($requests as $q)
+    @if ($q['kind'] === 'dry_run' && ! empty($q['result']['rows']))
+    <h3>要求 {{ $q['id'] }}（ドライラン）：手順ごとの確認条件の合否</h3>
+    @include('partials.step_results', ['rows' => $q['result']['rows'], 'limit' => 3])
+    @endif
+  @endforeach
   @endif
 </div>
 

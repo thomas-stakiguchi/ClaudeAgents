@@ -237,6 +237,7 @@ final class PlanRunner
         $ctx->irreversible = $policy->irreversibleStepIds($copy);
         $ctx->runId = '';
         $ctx->registered = [];
+        $ctx->log = []; // 行ごとの、手順の結果（確認条件の合否）。画面に出す（5章の7）
         $keyCol = null;
         foreach ($copy->input->columns as $c) {
             ($c->role ?? null) === 'business_key' && $keyCol = $c->name;
@@ -289,11 +290,15 @@ final class PlanRunner
                     $wasFirst = $others === [];
                 }
                 $reads = [];
-                $rowReport = ['business_key' => $key, 'status' => 'done', 'reads' => &$reads];
+                $ctx->log = [];
+                // 結果の行は、値で持つ（参照で持つと、次の行の処理で、前の行の記録が、書き換わる）
+                $rowReport = ['business_key' => $key, 'status' => 'done', 'reads' => [], 'steps' => []];
                 $stop = false;
                 foreach ($top->steps as $s) {
                     if (($why = $this->step($s, $ctx, $values, $key, $report, $reads, $stop)) !== null) {
                         $rowReport['status'] = 'halted';
+                        $rowReport['reads'] = $reads;
+                        $rowReport['steps'] = $ctx->log;
                         $report->rows[] = $rowReport;
                         $this->safeReset();
 
@@ -308,10 +313,14 @@ final class PlanRunner
                     $this->browser->resetToStart(); // 各行の終わりに、開始画面へ戻る（7-1）。戻せなければ停止
                 } catch (\Throwable $e) {
                     $rowReport['status'] = 'halted';
+                    $rowReport['reads'] = $reads;
+                    $rowReport['steps'] = $ctx->log;
                     $report->rows[] = $rowReport;
 
                     return $report->halt('画面を初期状態に戻せません: '.$e->getMessage());
                 }
+                $rowReport['reads'] = $reads;
+                $rowReport['steps'] = $ctx->log;
                 $report->rows[] = $rowReport;
                 // この行で、取り消せない手順を、実際に実行したか（条件分岐で、通らなかった行は、初回の1件に数えない）
                 $didExecute = $ctx->mode === 'real' && in_array($key, $this->gate->executedKeys($ctx->runId, $ctx->registered, $loopIrr), true);
@@ -409,7 +418,9 @@ final class PlanRunner
                     return null; // 宣言。1aでは、ダイアログの自動対応はしない（出たら停止）
                 case 'if':
                     $verifier = new Verifier($this->browser);
-                    $branch = $verifier->check($s->condition, $s, $values) ? $s->then : ($s->else ?? null);
+                    $cond = $verifier->check($s->condition, $s, $values);
+                    $ctx->log[] = ['id' => (string) $s->id, 'action' => 'if', 'verify' => $this->verifyLabel($s->condition), 'ok' => $cond, 'note' => $cond ? 'then' : (isset($s->else) ? 'else' : '分岐なし（停止）')];
+                    $branch = $cond ? $s->then : ($s->else ?? null);
                     if ($branch === null) {
                         return "条件に合わず、else がないため停止: {$s->id}"; // 書かれていない分岐は、すべて停止
                     }
@@ -427,14 +438,14 @@ final class PlanRunner
                 return $this->irreversible($s, $ctx, $values, $key, $stop);
             }
 
-            return $this->reversible($s, $values, $reads);
+            return $this->reversible($s, $ctx, $values, $reads);
         } catch (\Throwable $e) {
             return "手順 {$s->id} で例外: ".$e->getMessage();
         }
     }
 
     /** @param array<string,string> $values @param array<string,string> $reads */
-    private function reversible(\stdClass $s, array $values, array &$reads): ?string
+    private function reversible(\stdClass $s, \stdClass $ctx, array $values, array &$reads): ?string
     {
         switch ($s->action) {
             case 'open_url':
@@ -459,11 +470,19 @@ final class PlanRunner
             default:
                 return "この操作は、1aでは未対応です: {$s->action}";
         }
-        if (! (new Verifier($this->browser))->check($s->verify, $s, $values)) {
+        $ok = (new Verifier($this->browser))->check($s->verify, $s, $values);
+        $ctx->log[] = ['id' => (string) $s->id, 'action' => (string) $s->action, 'verify' => $this->verifyLabel($s->verify), 'ok' => $ok, 'note' => ''];
+        if (! $ok) {
             return "確認条件を満たしません: {$s->id}";
         }
 
         return null;
+    }
+
+    /** 確認条件を、画面に出す短い文にする（例：text_visible：発注入力） */
+    private function verifyLabel(\stdClass $v): string
+    {
+        return ($v->type ?? '?').'：'.($v->value ?? '');
     }
 
     /** @param array<string,string> $values */
@@ -481,9 +500,12 @@ final class PlanRunner
             foreach ($s->readback ?? [] as $item) {
                 $expected = isset($item->column) ? ($values[$item->column] ?? '') : (string) $item->value;
                 if (! ReadbackComparator::equal($expected, $raw[$item->target], $item->rule ?? null)) {
+                    $ctx->log[] = ['id' => (string) $s->id, 'action' => (string) $s->action, 'verify' => '読み返し照合', 'ok' => false, 'note' => "一致しません: {$item->target}"];
+
                     return "読み返しが一致しません（ドライラン）: {$item->target}";
                 }
             }
+            $ctx->log[] = ['id' => (string) $s->id, 'action' => (string) $s->action, 'verify' => '読み返し照合', 'ok' => true, 'note' => '取り消せない操作の手前で停止（実行しない）'];
             $stop = true;
 
             return null;
@@ -494,8 +516,11 @@ final class PlanRunner
             new BrowserIrreversibleAction($this->guard, $this->browser, $verifier, $values),
         );
         if (! $outcome->executed) {
+            $ctx->log[] = ['id' => (string) $s->id, 'action' => (string) $s->action, 'verify' => '12-1の検査', 'ok' => false, 'note' => '実行しませんでした: '.implode(' / ', array_slice($outcome->reasons, 0, 3))];
+
             return "取り消せない操作を実行しませんでした: {$s->id}: ".implode(' / ', $outcome->reasons);
         }
+        $ctx->log[] = ['id' => (string) $s->id, 'action' => (string) $s->action, 'verify' => isset($s->verify) ? $this->verifyLabel($s->verify) : '', 'ok' => $outcome->confirmed, 'note' => $outcome->confirmed ? '実行し、確認条件を満たしました' : '実行したが、結果を確認できません（要確認）'];
         if (! $outcome->confirmed) {
             return "結果を確認できません（要確認）: {$s->id} 業務キー {$key}";
         }

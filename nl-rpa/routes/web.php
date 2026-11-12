@@ -23,9 +23,11 @@ Route::middleware('nlrpa.token')->group(function () use ($hash, $run): void {
     Route::post('/plans/{hash}/approve-plan', [PlanController::class, 'approvePlan'])->where('hash', $hash);
     Route::post('/plans/{hash}/dry-run', [PlanController::class, 'dryRun'])->where('hash', $hash);
     Route::post('/plans/{hash}/approve-final', [PlanController::class, 'approveFinal'])->where('hash', $hash);
+    Route::get('/plans/{hash}/diff', [PlanController::class, 'diff'])->where('hash', $hash);
     Route::get('/plans/{hash}/preview', [PlanController::class, 'preview'])->where('hash', $hash);
     Route::post('/plans/{hash}/register', [PlanController::class, 'register'])->where('hash', $hash);
     Route::get('/runs/{runId}', [RunController::class, 'show'])->where('runId', $run);
+    Route::get('/runs/{runId}/result.csv', [RunController::class, 'csv'])->where('runId', $run);
     Route::post('/runs/{runId}/start', [RunController::class, 'start'])->where('runId', $run);
     Route::post('/runs/{runId}/confirm-first', [RunController::class, 'confirmFirst'])->where('runId', $run);
     Route::post('/runs/{runId}/resolve', [RunController::class, 'resolve'])->where('runId', $run);

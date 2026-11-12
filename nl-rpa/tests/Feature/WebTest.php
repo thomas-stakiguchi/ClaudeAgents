@@ -1152,4 +1152,127 @@ class WebTest extends TestCase
             @proc_close($child);
         }
     }
+
+    // ---- 1aの仕上げ：差分、手順ごとの合否、結果、結果CSV、業務キー列 ----
+
+    public function test_計画の差分_前の計画と比べて_重要な変更を示す(): void
+    {
+        $this->login();
+        $hash1 = $this->createPlan(); // 根拠の文が、すべてシナリオにある
+        $this->post2("/plans/{$hash1}/approve-plan");
+        $hash2 = $this->createPlan('発注管理システムにログインする。'); // 登録ボタンの文などが、シナリオにない → 根拠が外れる（AIが補った）
+        $this->assertNotSame($hash1, $hash2);
+        $this->get($this->base."/plans/{$hash2}")->assertOk()->assertSee('前の計画との差分');
+        $r = $this->get($this->base."/plans/{$hash2}/diff");
+        $r->assertOk()->assertSee('手順 S-005 / source')->assertSee('変更')->assertSee(substr($hash1, 0, 23));
+        // 根拠の変更は、重要ではない（重要の印が付くのは、操作・対象・確認条件などの変更）
+        $this->assertStringNotContainsString('手順 S-005 / target', $r->getContent());
+        // 比べる相手を指定できる。不正な指定は、無視して、既定に戻る
+        $this->get($this->base."/plans/{$hash1}/diff?against={$hash2}")->assertOk()->assertSee('変更');
+        $this->get($this->base."/plans/{$hash2}/diff?against=../../etc/passwd")->assertOk();
+        $this->get($this->base."/plans/{$hash2}/diff?against=sha256:".str_repeat('f', 64))->assertOk()->assertSee('比べる計画が、ありません');
+        $this->get($this->base.'/plans/sha256:'.str_repeat('0', 64).'/diff')->assertNotFound();
+        // 自分自身との比較は、差分なし
+        $this->get($this->base."/plans/{$hash1}/diff?against={$hash1}")->assertOk()->assertSee('差分は、ありません');
+    }
+
+    public function test_差分は_最終承認のある古い計画を優先して比べる(): void
+    {
+        $this->login();
+        $h1 = $this->createPlan();
+        $this->post2("/plans/{$h1}/approve-plan");
+        $this->post2("/plans/{$h1}/dry-run");
+        $req = $this->lastRequestId();
+        $this->worker($req);
+        $dry = $this->engine()->store->getRequest($req)['dry_run_id'];
+        $this->post2("/plans/{$h1}/approve-final", ['dry_run_id' => $dry]);
+        $h2 = $this->createPlan('発注管理システムにログインする。'); // 承認のない、新しい計画
+        $h3 = $this->createPlan('発注管理システムにログインする。\n別の文。'); // さらに、新しい計画
+        $r = $this->get($this->base."/plans/{$h3}")->assertOk();
+        $r->assertSee('最終承認済み'); // 比べる相手は、最終承認のある h1（直前の h2 ではない）
+        $this->get($this->base."/plans/{$h3}/diff")->assertOk()->assertSee(substr($h1, 0, 23));
+    }
+
+    public function test_業務キーの列が計画とプレビューに表示される(): void
+    {
+        $this->login();
+        $hash = $this->createPlan();
+        $this->get($this->base."/plans/{$hash}")->assertOk()->assertSee('業務キー（二重実行の防止に使う）')->assertSee('伝票番号');
+        $this->post2("/plans/{$hash}/approve-plan");
+        $this->post2("/plans/{$hash}/dry-run");
+        $req = $this->lastRequestId();
+        $this->worker($req);
+        $dry = $this->engine()->store->getRequest($req)['dry_run_id'];
+        $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $dry]);
+        $input = $this->csv();
+        $this->get($this->base."/plans/{$hash}/preview?input_set_id={$input}&dry_run_id={$dry}")->assertOk()->assertSee('業務キーの列：「伝票番号」');
+    }
+
+    public function test_手順ごとの確認条件の合否と結果が_画面に出る(): void
+    {
+        $this->login();
+        [$hash, $runId] = $this->preparedRun();
+        $planPage = $this->get($this->base."/plans/{$hash}")->assertOk();
+        $planPage->assertSee('手順ごとの確認条件の合否')->assertSee('取り消せない操作の手前で停止');
+        $this->post2("/runs/{$runId}/start");
+        $this->worker($this->lastRequestId());
+        $page = $this->get($this->base."/runs/{$runId}")->assertOk();
+        $page->assertSee('結果（画面から読んだ値）')->assertSee('ORD-0001')->assertSee('手順ごとの確認条件の合否（最新の実行）')->assertSee('実行し、確認条件を満たしました');
+        $page->assertSee('result.csv');
+    }
+
+    public function test_結果CSV_業務キーと状態と読んだ値_式として実行されないようエスケープする(): void
+    {
+        $this->login();
+        [$hash, $runId] = $this->preparedRun();
+        $this->post2("/runs/{$runId}/start");
+        $this->worker($this->lastRequestId());
+        // 読んだ値に、式（=、+、-、@、タブ、CR で始まる値）を含む結果を、記録する（画面に出る値は、対象システムから読んだ、信用できない値）
+        $e = $this->engine();
+        $id = $e->store->createRequest('run', $hash, null, $runId, null, '佐藤');
+        $e->store->claimRequest($id);
+        $e->store->finishRequest($id, ['status' => 'completed', 'reasons' => [], 'rows' => [
+            ['business_key' => 'K-001', 'status' => 'done', 'reads' => ['order_number' => '=HYPERLINK("http://evil.example","x")']],
+            ['business_key' => 'K-002', 'status' => 'done', 'reads' => ['order_number' => '+1+1']],
+            ['business_key' => 'K-003', 'status' => 'done', 'reads' => ['order_number' => "\t@SUM(A1)"]],
+        ]]);
+        $res = $this->get($this->base."/runs/{$runId}/result.csv");
+        $res->assertOk();
+        $this->assertStringContainsString('text/csv', $res->headers->get('Content-Type'));
+        $this->assertStringContainsString('attachment', $res->headers->get('Content-Disposition'));
+        $body = $res->streamedContent();
+        $this->assertStringStartsWith("\xEF\xBB\xBF", $body);
+        $lines = array_map('str_getcsv', array_filter(explode("\n", substr($body, 3))));
+        $this->assertSame(['業務キー', '状態 S-005', '読んだ値 order_number'], $lines[0]);
+        $byKey = [];
+        foreach (array_slice($lines, 1) as $l) {
+            $byKey[$l[0]] = $l;
+        }
+        $this->assertSame("'=HYPERLINK(\"http://evil.example\",\"x\")", $byKey['K-001'][2], '式で始まる値は、先頭に「\'」を付ける');
+        $this->assertSame("'+1+1", $byKey['K-002'][2]);
+        $this->assertSame("'\t@SUM(A1)", $byKey['K-003'][2]);
+        $this->assertSame('成功', $byKey['K-001'][1]);
+        // 認証なしでは、ダウンロードできない
+        $this->post($this->base.'/logout', ['name' => 'x'], $this->origin());
+        $this->get($this->base."/runs/{$runId}/result.csv")->assertRedirect('/login');
+    }
+
+    public function test_業務キーが式で始まる場合も_CSVはエスケープされる(): void
+    {
+        $this->login();
+        $hash = $this->createPlan();
+        $this->post2("/plans/{$hash}/approve-plan");
+        $this->post2("/plans/{$hash}/dry-run");
+        $req = $this->lastRequestId();
+        $this->worker($req);
+        $dry = $this->engine()->store->getRequest($req)['dry_run_id'];
+        $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $dry]);
+        $input = $this->csv("商品コード,数量,伝票番号\nABC,1,=cmd|'/C'!A0\n");
+        $r = $this->post2("/plans/{$hash}/register", ['input_set_id' => $input, 'dry_run_id' => $dry, 'count' => '1']);
+        preg_match('#/runs/(RUN-[0-9]{8}-[0-9]{6}-[0-9a-f]{6})$#', (string) $r->headers->get('Location'), $m);
+        $runId = $m[1] ?? $this->fail('登録できなかった');
+        $body = $this->get($this->base."/runs/{$runId}/result.csv")->streamedContent();
+        $this->assertStringContainsString("'=cmd|'/C'!A0", $body);
+        $this->assertStringNotContainsString("\n=cmd", $body);
+    }
 }
