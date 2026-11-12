@@ -25,6 +25,31 @@ class StateTest extends TestCase
         $this->states = new StepStateStore($this->db, $this->ledger, $clock);
     }
 
+    public function test_記録のファイルは所有者だけが読み書きできる(): void
+    {
+        $dir = sys_get_temp_dir().'/nlrpa_perm_'.bin2hex(random_bytes(4));
+        mkdir($dir, 0700);
+        $path = $dir.'/x.sqlite';
+        $old = umask(0022);
+        try {
+            Db::open($path);
+            $this->assertSame(0, fileperms($path) & 0077, 'データベースのファイルの権限が広い');
+            foreach (['-wal', '-shm'] as $ext) {
+                is_file($path.$ext) && $this->assertSame(0, fileperms($path.$ext) & 0077, $ext.' の権限が広い');
+            }
+            // 以前に、広い権限で作ったファイルも、開くときに絞る
+            chmod($path, 0644);
+            Db::open($path);
+            $this->assertSame(0, fileperms($path) & 0077);
+        } finally {
+            umask($old);
+            foreach (glob($dir.'/*') ?: [] as $f) {
+                @unlink($f);
+            }
+            @rmdir($dir);
+        }
+    }
+
     public function test_記録のチェーンは連なり検証できる(): void
     {
         $this->assertSame(Ledger::GENESIS, $this->ledger->head());

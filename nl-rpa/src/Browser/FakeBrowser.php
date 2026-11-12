@@ -14,6 +14,8 @@ use Src\Plan\StrictJson;
  */
 final class FakeBrowser implements BrowserPort
 {
+    use RegistrationRestriction;
+
     private string $page;
     /** @var array<string,string> 入力欄・文字の現在の値（要素名 => 値） */
     private array $values = [];
@@ -87,6 +89,12 @@ final class FakeBrowser implements BrowserPort
 
     public function openUrl(string $page): void
     {
+        $this->assertRegistered('open_url', $page);
+        $this->rawOpenUrl($page);
+    }
+
+    private function rawOpenUrl(string $page): void
+    {
         $this->page($page);
         $this->page = $page;
         $this->values = [];
@@ -112,6 +120,12 @@ final class FakeBrowser implements BrowserPort
 
     public function typeText(string $element, string $value): void
     {
+        $this->assertRegistered('type_text', $element);
+        $this->rawTypeText($element, $value);
+    }
+
+    private function rawTypeText(string $element, string $value): void
+    {
         $e = $this->element($element);
         if (($e->kind ?? null) !== 'input') {
             throw new \RuntimeException("入力欄ではありません: {$element}");
@@ -124,6 +138,7 @@ final class FakeBrowser implements BrowserPort
 
     public function clearText(string $element): void
     {
+        $this->assertRegistered('clear_text', $element);
         $this->element($element);
         $this->values[$element] = '';
     }
@@ -206,11 +221,11 @@ final class FakeBrowser implements BrowserPort
                 if (! is_string($value)) {
                     throw new \RuntimeException('入力する値がありません');
                 }
-                $this->typeText($target, $value);
+                $this->rawTypeText($target, $value);
 
                 return;
             case 'open_url':
-                $this->openUrl($target);
+                $this->rawOpenUrl($target);
 
                 return;
         }

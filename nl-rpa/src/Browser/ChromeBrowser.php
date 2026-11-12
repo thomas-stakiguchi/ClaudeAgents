@@ -30,6 +30,8 @@ use Src\Guard\Redeemed;
  */
 final class ChromeBrowser implements BrowserPort
 {
+    use RegistrationRestriction;
+
     private ?ProcessAwareBrowser $browser = null;
     private ?Page $page = null;
     private ?string $profileDir = null;
@@ -289,6 +291,12 @@ final class ChromeBrowser implements BrowserPort
 
     public function openUrl(string $page): void
     {
+        $this->assertRegistered('open_url', $page);
+        $this->rawOpenUrl($page);
+    }
+
+    private function rawOpenUrl(string $page): void
+    {
         $url = $this->pageUrls[$page] ?? throw new \RuntimeException("画面の記録にない画面です: {$page}");
         $p = $this->ensure();
         try {
@@ -327,6 +335,12 @@ final class ChromeBrowser implements BrowserPort
 
     public function typeText(string $element, string $value): void
     {
+        $this->assertRegistered('type_text', $element);
+        $this->rawTypeText($element, $value);
+    }
+
+    private function rawTypeText(string $element, string $value): void
+    {
         if (preg_match('/[\x00-\x1f\x7f]/', $value)) {
             throw new \RuntimeException('改行・タブ・制御文字は入力しません（A-2）');
         }
@@ -337,6 +351,7 @@ final class ChromeBrowser implements BrowserPort
 
     public function clearText(string $element): void
     {
+        $this->assertRegistered('clear_text', $element);
         $this->call('function (sel) { var e = document.querySelector(sel); if (!e) { throw new Error("要素がありません"); } e.value = ""; e.dispatchEvent(new Event("input", {bubbles: true})); return true; }', [$this->selector($element)]);
     }
 
@@ -361,7 +376,7 @@ final class ChromeBrowser implements BrowserPort
 
     public function resetToStart(): void
     {
-        $this->openUrl('start');
+        $this->rawOpenUrl('start');
     }
 
     public function performIrreversible(Redeemed $proof, array $rowValues): void
@@ -382,11 +397,11 @@ final class ChromeBrowser implements BrowserPort
                 if (! is_string($value)) {
                     throw new \RuntimeException('入力する値がありません');
                 }
-                $this->typeText($target, $value);
+                $this->rawTypeText($target, $value);
 
                 return;
             case 'open_url':
-                $this->openUrl($target);
+                $this->rawOpenUrl($target);
 
                 return;
         }

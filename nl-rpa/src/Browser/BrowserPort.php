@@ -51,5 +51,11 @@ interface BrowserPort
      */
     public function performIrreversible(Redeemed $proof, array $rowValues): void;
 
+    /**
+     * 取り消せる操作（openUrl、typeText、clearText）を、承認済みの個別登録に限る（多重の防御。12-1）。
+     * 登録にない対象への操作は、例外にする。実行エンジンは、実行のたびに、承認済みの登録から作った OperationPolicy を渡す。
+     */
+    public function restrictTo(\Src\Policy\OperationPolicy $policy): void;
+
     public function close(): void;
 }

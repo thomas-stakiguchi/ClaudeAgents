@@ -82,6 +82,7 @@ class NlrpaWorker extends Command
             if (! Engine::inputsAreCurrent($p['inputs'])) {
                 throw new \RuntimeException('許可リスト・個別登録が、承認のときから変わっています。計画を作り直して、再承認してください');
             }
+            $e->reclaimDeadProfiles(); // 前のワーカーが残した、Chromeとプロファイルを、先に回収する（孤児のChromeが、実行のロックを持ち続けないように）
             $browser = $e->newBrowser();
             $runner = $e->newRunner($browser);
             $report = $req['kind'] === 'run'

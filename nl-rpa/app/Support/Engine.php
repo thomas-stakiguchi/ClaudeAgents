@@ -235,6 +235,28 @@ final class Engine
         );
     }
 
+    /**
+     * 動いていないワーカーが残した、使い捨てプロファイルと、孤児のChromeを回収する（14-3の5）。
+     * 動いているワーカー（PIDと開始時刻が一致）のものには、触らない。
+     *
+     * @return array{processes:int,dirs:int}
+     */
+    public function reclaimDeadProfiles(): array
+    {
+        $dead = array_values(array_filter($this->store->profiles(), static function (array $p): bool {
+            return ! ($p['proc_start'] !== null && ProcessInfo::startTime($p['worker_pid']) === $p['proc_start'] && ProcessInfo::isAlive($p['worker_pid']));
+        }));
+        if ($dead === []) {
+            return ['processes' => 0, 'dirs' => 0];
+        }
+        $r = ProfileCleaner::clean($this->profileRoot(), array_column($dead, 'dir'));
+        foreach ($dead as $p) {
+            in_array($p['dir'], $r['skipped'], true) || $this->store->unregisterProfile($p['dir']);
+        }
+
+        return ['processes' => $r['processes'], 'dirs' => $r['dirs']];
+    }
+
     public function newRunner(BrowserPort $browser): PlanRunner
     {
         return new PlanRunner($this->ledger, $this->states, $this->flags, $this->guard, $this->approvals, $browser, $this->runLock());

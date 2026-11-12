@@ -19,6 +19,20 @@ final class Db
     /** @param string $path ファイルのパス、または ':memory:' */
     public static function open(string $path): self
     {
+        // 記録のファイルは、所有者だけが読み書きできる（0600）にする（SEC-9）。WALの補助ファイルも、同じ権限で作られる
+        $oldUmask = $path === ':memory:' ? null : umask(0077);
+        try {
+            return self::openInner($path);
+        } finally {
+            $oldUmask !== null && umask($oldUmask);
+            if ($path !== ':memory:' && is_file($path) && (fileperms($path) & 0077) !== 0) {
+                @chmod($path, 0600); // 以前に、広い権限で作ったファイルも、絞る
+            }
+        }
+    }
+
+    private static function openInner(string $path): self
+    {
         $pdo = new \PDO('sqlite:'.$path, null, null, [
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,

@@ -521,6 +521,61 @@ class RunnerTest extends TestCase
         $this->assertStringContainsString('S-090', implode(' ', $dry->reasons));
     }
 
+    private function withWaitFor(int $timeout): void
+    {
+        $w = StrictJson::decode('{"id":"S-080","action":"wait_for","destination":{"kind":"browser","name":"stub"},"timeout_sec":'.$timeout.',"source":null,"verify":{"type":"text_visible","value":"READY"}}');
+        array_splice($this->plan->steps[1]->steps, 1, 0, [$w]);
+    }
+
+    public function test_wait_forは_確認条件が満たされるまで待つ(): void
+    {
+        $this->withWaitFor(10);
+        $calls = 0;
+        $this->browser->textVisibleOverride = function (string $text, bool $real) use (&$calls): bool {
+            if ($text !== 'READY') {
+                return $real;
+            }
+
+            return ++$calls >= 3;
+        };
+        $this->approve('plan');
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::COMPLETED, $dry->status, implode(' / ', $dry->reasons));
+        $this->assertGreaterThanOrEqual(3, $calls, '満たされるまで、繰り返し判定した');
+    }
+
+    public function test_wait_forは_上限まで待っても満たされなければ止まる(): void
+    {
+        $this->withWaitFor(1);
+        $this->browser->textVisibleOverride = fn (string $text, bool $real): bool => $text === 'READY' ? false : $real;
+        $this->approve('plan');
+        $t = microtime(true);
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::HALTED, $dry->status);
+        $this->assertGreaterThanOrEqual(0.9, microtime(true) - $t, '上限まで待った');
+        $this->assertLessThan(5, microtime(true) - $t);
+    }
+
+    public function test_ブラウザ部品も_登録にない対象への取り消せる操作は拒否する(): void
+    {
+        $this->prepareRun(); // ドライランで、部品に、承認済みの登録が渡される
+        $b = $this->browser;
+        $b->openUrl('order_page'); // 登録あり
+        $b->typeText('item_code', 'ABC'); // 登録あり
+        foreach ([
+            fn () => $b->openUrl('done_page'),              // URLの登録がない
+            fn () => $b->typeText('order_number', 'x'),     // 入力欄の登録がない
+            fn () => $b->clearText('submit_button'),        // 登録がない
+        ] as $i => $f) {
+            try {
+                $f();
+                $this->fail("登録にない操作が通った: {$i}");
+            } catch (\RuntimeException $e) {
+                $this->assertStringContainsString('個別登録にない', $e->getMessage());
+            }
+        }
+    }
+
     public function test_10_3_別の行に要確認が残っていれば_本番を始めない_登録もできない(): void
     {
         $this->prepareRun();

@@ -222,6 +222,7 @@ final class PlanRunner
         if (PlanValidator::hasUnresolved($copy)) {
             return '「未確定」が残っています';
         }
+        $this->browser->restrictTo($policy); // ブラウザ部品の、取り消せる操作も、承認済みの個別登録に限る（多重の防御。12-1）
         if (! DestinationLimits::isAllowed($this->browser->destinationName())) {
             return '接続先が、ビルド時の定数の範囲にありません';
         }
@@ -535,8 +536,18 @@ final class PlanRunner
                 $this->browser->clearText($s->target);
                 break;
             case 'wait_for':
+                // 確認条件が満たされるまで、上限（timeout_sec）まで、繰り返し判定する（R20）。待ちの間も、停止の旗を見る
+                $deadline = microtime(true) + max(0, (int) $s->timeout_sec);
+                $waiter = new Verifier($this->browser);
+                while (! $waiter->check($s->verify, $s, $values) && microtime(true) < $deadline) {
+                    if ($this->flags->isSet(Flags::KILL_SWITCH) || $this->flags->isSet(Flags::STOP)) {
+                        return '待っている間に、停止の旗が立ちました';
+                    }
+                    usleep(250_000);
+                }
+                break;
             case 'write_result':
-                break; // 1aの偽の部品は、待たなくてよい。確認条件だけ判定する
+                break; // 確認条件だけ判定する
             default:
                 return "この操作は、1aでは未対応です: {$s->action}";
         }
