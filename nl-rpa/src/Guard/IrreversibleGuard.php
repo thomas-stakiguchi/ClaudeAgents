@@ -60,6 +60,7 @@ final class IrreversibleGuard
 
         // ここから先は、「処理中」を書いたあと。異常は、すべて「要確認」にする（10-1）
         $confirmed = false;
+        $effect = EffectId::of($permit->step()); // 検査した時点の手順から決める（実行中に、計画の元のオブジェクトが書き換わっても、変わらない）
         try {
             $confirmed = $action->perform($permit) === true;
         } catch (\Throwable) {
@@ -68,11 +69,11 @@ final class IrreversibleGuard
 
         try {
             $confirmed
-                ? $this->states->markSucceeded($r->businessKey, $r->stepId)
-                : $this->states->markNeedsReview($r->businessKey, $r->stepId);
+                ? $this->states->markSucceeded($r->businessKey, $effect)
+                : $this->states->markNeedsReview($r->businessKey, $effect);
         } catch (\Throwable $e) {
             // 実行後に状態を保存できなかった。「処理中」のまま残る（次の起動時に「要確認」になる。二重実行にはならない）
-            $this->logPostExecFailure($r, '実行後の状態を保存できませんでした: '.$e->getMessage());
+            $this->logPostExecFailure($r, $effect, '実行後の状態を保存できませんでした: '.$e->getMessage());
 
             return GuardOutcome::executedButUnsaved();
         }
@@ -113,7 +114,7 @@ final class IrreversibleGuard
 
     private function assertProcessing(Permit $p): void
     {
-        $cur = $this->states->current($p->businessKey, $p->stepId);
+        $cur = $this->states->current($p->businessKey, EffectId::of($p->step()));
         if ($cur === null || $cur['state'] !== StepStateStore::PROCESSING || $cur['run_id'] !== $p->runId || $cur['plan_hash'] !== $p->planHash) {
             throw new \LogicException('保存先の状態が、許可と一致しません');
         }
@@ -209,7 +210,11 @@ final class IrreversibleGuard
         // 初回の1件：この実行で、すでに別の行に手を付けているなら、その初回の1件が成功し、確認されていること
         $gate = new FirstRowGate($this->ledger, $this->states);
         $rowsRec = is_array($run->rows ?? null) ? $run->rows : [];
-        $irrIds = $policy->irreversibleStepIds($plan);
+        $irrIds = [];
+        foreach ($policy->irreversibleStepIds($plan) as $sid) {
+            ($st = self::findStep($plan->steps, $sid)) !== null && $irrIds[] = EffectId::of($st);
+        }
+        $irrIds = array_values(array_unique($irrIds)); // 状態の表の識別子（9-4）
         $others = array_values(array_diff($gate->executedKeys($r->runId, $rowsRec, $irrIds), [$r->businessKey]));
         if ($others !== [] && ! $gate->isConfirmed($r->runId, $rowsRec, $irrIds)) {
             $reasons[] = '初回の1件の確認が済んでいません（この実行で先に実行した行が、成功し、確認されるまで、次へ進めません）';
@@ -233,7 +238,7 @@ final class IrreversibleGuard
 
         // 11. 最後に、「処理中」の保存（確認と同じトランザクションで、状態と停止の旗を確かめ直す）。失敗したら、実行しない
         try {
-            $this->states->markProcessing($r->businessKey, $r->stepId, $hash, $r->runId, function (): void {
+            $this->states->markProcessing($r->businessKey, EffectId::of($step), $hash, $r->runId, function (): void {
                 if ($this->flags->isSet(Flags::KILL_SWITCH) || $this->flags->isSet(Flags::STOP)) {
                     throw new \LogicException('停止の旗が立ちました');
                 }
@@ -311,9 +316,10 @@ final class IrreversibleGuard
     /** @param list<string> $reasons */
     private function checkStates(GuardRequest $r, array &$reasons): void
     {
-        $cur = $this->states->current($r->businessKey, $r->stepId);
+        $effect = $this->effectOf($r);
+        $cur = $this->states->current($r->businessKey, $effect);
         // 状態の表が、記録（ledger）の最新と食い違っていれば、拒否（表の書き換えの検知。LOC-8：完全ではない）
-        $last = $this->ledger->latest('state', StepStateStore::subject($r->businessKey, $r->stepId));
+        $last = $this->ledger->latest('state', StepStateStore::subject($r->businessKey, $this->effectOf($r)));
         if (($cur['state'] ?? null) !== ($last->state ?? null)) {
             $reasons[] = '状態の表が、記録と食い違っています（書き換えの疑い）';
         }
@@ -323,6 +329,14 @@ final class IrreversibleGuard
         if (($un = $this->states->unresolvedFor($r->businessKey)) !== []) {
             $reasons[] = 'この業務キーに、未解消の「処理中」「要確認」があります: '.implode(', ', $un);
         }
+    }
+
+    /** 状態の表に使う識別子（接続先・操作・対象から、エンジンが計算する。AIが振る手順IDは、使わない。9-4） */
+    private function effectOf(GuardRequest $r): string
+    {
+        $step = self::findStep($r->plan->steps ?? [], $r->stepId);
+
+        return $step !== null ? EffectId::of($step) : $r->stepId;
     }
 
     /** @param array<mixed> $steps */
@@ -342,10 +356,10 @@ final class IrreversibleGuard
         return null;
     }
 
-    private function logPostExecFailure(GuardRequest $r, string $message): void
+    private function logPostExecFailure(GuardRequest $r, string $effect, string $message): void
     {
         try {
-            $this->ledger->append('post_exec_failure', StepStateStore::subject($r->businessKey, $r->stepId), (object) ['run_id' => $r->runId, 'message' => $message]);
+            $this->ledger->append('post_exec_failure', StepStateStore::subject($r->businessKey, $effect), (object) ['run_id' => $r->runId, 'message' => $message]);
         } catch (\Throwable) {
         }
     }
@@ -354,7 +368,7 @@ final class IrreversibleGuard
     private function logRefusal(GuardRequest $r, array $reasons): void
     {
         try {
-            $this->ledger->append('refusal', StepStateStore::subject($r->businessKey, $r->stepId), (object) ['run_id' => $r->runId, 'reasons' => $reasons]);
+            $this->ledger->append('refusal', StepStateStore::subject($r->businessKey, $this->effectOf($r)), (object) ['run_id' => $r->runId, 'reasons' => $reasons]);
         } catch (\Throwable) {
             // 記録に失敗しても、実行しないことは変わらない
         }

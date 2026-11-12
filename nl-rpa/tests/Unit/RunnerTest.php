@@ -93,12 +93,12 @@ class RunnerTest extends TestCase
     {
         $this->prepareRun();
         $this->assertSame([], $this->browser->orders(), 'ドライランでは、取り消せない操作を実行しない');
-        $this->assertNull($this->states->get('K-001', 'S-005'));
+        $this->assertNull($this->states->get('K-001', \Tests\TestCase::SUBMIT));
 
         $r1 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r1->status);
         $this->assertSame(['ORD-0001'], $this->browser->orders());
-        $this->assertSame('succeeded', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('succeeded', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->assertSame('ORD-0001', $r1->rows[0]['reads']['order_number']);
 
         // 確認しないまま再度動かしても、残りは実行されない
@@ -157,7 +157,7 @@ class RunnerTest extends TestCase
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::HALTED, $r->status);
         $this->assertSame([], $this->browser->orders());
-        $this->assertNull($this->states->get('K-001', 'S-005'));
+        $this->assertNull($this->states->get('K-001', \Tests\TestCase::SUBMIT));
         // 入力直後の確認条件で止まる（読み返し照合まで進まない）。Guard自身の読み返し照合は GuardTest で確認する
         $this->assertNotEmpty(array_filter($r->reasons, fn ($x) => str_contains($x, '確認条件を満たしません')));
     }
@@ -204,7 +204,7 @@ class RunnerTest extends TestCase
         $this->browser->failAfterClick = true;
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::HALTED, $r->status);
-        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->assertCount(1, $this->browser->orders());
 
         $this->browser->failAfterClick = false;
@@ -221,7 +221,7 @@ class RunnerTest extends TestCase
         }
 
         // 人が「実行済み」と判定したら、成功になる。次の行へ進むには、あらためて初回の確認が要る
-        $this->states->resolve('K-001', 'S-005', true, '佐藤');
+        $this->states->resolve('K-001', \Tests\TestCase::SUBMIT, true, '佐藤');
         $r3 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r3->status);
         $this->assertCount(1, $this->browser->orders());
@@ -234,9 +234,9 @@ class RunnerTest extends TestCase
     public function test_処理中は人の判定ができない_動いているワーカーの操作を未実行にさせない(): void
     {
         $this->prepareRun();
-        $this->states->markProcessing('K-009', 'S-005', 'h', 'RUN-1');
+        $this->states->markProcessing('K-009', \Tests\TestCase::SUBMIT, 'h', 'RUN-1');
         $this->expectException(\LogicException::class);
-        $this->states->resolve('K-009', 'S-005', false, '佐藤');
+        $this->states->resolve('K-009', \Tests\TestCase::SUBMIT, false, '佐藤');
     }
 
     public function test_前の実行で成功した行がある再実行でも_この実行の最初の1件で止まる(): void
@@ -271,7 +271,7 @@ class RunnerTest extends TestCase
         $this->browser->clickDoesNothing = true;
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::HALTED, $r->status);
-        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
     }
 
     public function test_承認後に計画が変わったら開始しない(): void
@@ -472,27 +472,69 @@ class RunnerTest extends TestCase
     {
         $this->prepareRun();
         // 前回、K-001 の取り消せない操作の直前に「処理中」を書いたまま、プロセスが死んだ状態を作る
-        $this->states->markProcessing('K-001', 'S-005', PlanHasher::hash($this->plan, $this->inputs), 'RUN-0');
+        $this->states->markProcessing('K-001', \Tests\TestCase::SUBMIT, PlanHasher::hash($this->plan, $this->inputs), 'RUN-0');
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
-        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->assertSame(RunReport::REFUSED_TO_START, $r->status, '10-3：未解消が残る間は、起動しない');
         $this->assertSame([], $this->browser->orders());
+    }
+
+    private function renumber(array $steps): void
+    {
+        foreach ($steps as $st) {
+            isset($st->id) && $st->id = 'S-'.(((int) substr($st->id, 2)) + 100);
+            foreach (['steps', 'then', 'else'] as $k) {
+                isset($st->{$k}) && $this->renumber($st->{$k});
+            }
+        }
+    }
+
+    public function test_9_4_手順IDを振り直した版でも_成功済みの業務キーは二重に実行しない(): void
+    {
+        $this->prepareRun();
+        $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
+        $this->assertSame(RunReport::COMPLETED, $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows)->status);
+        $this->assertCount(3, $this->browser->orders());
+
+        // 新しい版：AIが、手順IDを、すべて振り直した（中身は同じ）
+        $this->renumber($this->plan->steps);
+        $this->approve('plan');
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::COMPLETED, $dry->status, implode(' / ', $dry->reasons));
+        $this->approve('final');
+        $this->assertSame([], $this->registrar->register('RUN-2', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-2', $this->rows);
+        $this->assertSame(RunReport::COMPLETED, $r->status, implode(' / ', $r->reasons));
+        $this->assertCount(3, $this->browser->orders(), '手順IDが違っても、成功済みの行を、もう一度、実行してはいけない');
+        $this->assertSame(['skipped', 'skipped', 'skipped'], array_column($r->rows, 'status'));
+    }
+
+    public function test_同じ接続先_操作_対象の取り消せない手順が2つある計画は始めない(): void
+    {
+        $dup = StrictJson::decode(json_encode($this->plan->steps[1]->steps[3]));
+        $dup->id = 'S-090';
+        $this->plan->steps[1]->steps[] = $dup;
+        $this->approve('plan');
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::REFUSED_TO_START, $dry->status);
+        $this->assertStringContainsString('S-090', implode(' ', $dry->reasons));
     }
 
     public function test_10_3_別の行に要確認が残っていれば_本番を始めない_登録もできない(): void
     {
         $this->prepareRun();
-        $this->states->markProcessing('K-002', 'S-005', 'sha256:x', 'RUN-OLD');
-        $this->states->markNeedsReview('K-002', 'S-005');
+        $this->states->markProcessing('K-002', \Tests\TestCase::SUBMIT, 'sha256:x', 'RUN-OLD');
+        $this->states->markNeedsReview('K-002', \Tests\TestCase::SUBMIT);
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::REFUSED_TO_START, $r->status);
         $this->assertSame([], $this->browser->orders(), 'K-001 も、実行されない');
-        $this->assertNull($this->states->get('K-001', 'S-005'));
+        $this->assertNull($this->states->get('K-001', \Tests\TestCase::SUBMIT));
         // 登録の時点でも、断る（登録サービスに、状態の表を渡した場合）
         $reg = new RunRegistrar($this->ledger, $this->approvals, null, $this->states);
         $this->assertNotSame([], $reg->register('RUN-9', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
         // 解消すれば、始められる
-        $this->states->resolve('K-002', 'S-005', false, '佐藤');
+        $this->states->resolve('K-002', \Tests\TestCase::SUBMIT, false, '佐藤');
         $this->assertSame(RunReport::AWAITING_FIRST_ROW, $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows)->status);
     }
 
@@ -601,9 +643,9 @@ class RunnerTest extends TestCase
         $this->prepareRun();
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame('done', $r->rows[0]['status']);
-        $this->assertNull($this->states->get('K-001', 'S-005'), '1行目は、取り消せない手順を通っていない');
+        $this->assertNull($this->states->get('K-001', \Tests\TestCase::SUBMIT), '1行目は、取り消せない手順を通っていない');
         $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r->status, implode(' / ', $r->reasons));
-        $this->assertSame('succeeded', $this->states->get('K-002', 'S-005'), '2行目が、この実行の初回の1件');
+        $this->assertSame('succeeded', $this->states->get('K-002', \Tests\TestCase::SUBMIT), '2行目が、この実行の初回の1件');
         $this->assertCount(1, $this->browser->orders());
         // 確認できて、先へ進める（1行目は、何も実行していないので、確認の対象ではなく、行き詰まらない）
         $this->runner->confirmFirstRow('RUN-1', '佐藤', 'tester');
@@ -621,10 +663,10 @@ class RunnerTest extends TestCase
         $this->browser->failAfterClick = true;
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame(RunReport::HALTED, $r->status);
-        $this->assertSame('succeeded', $this->states->get('K-001', 'S-004'));
-        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('succeeded', $this->states->get('K-001', 'E-a93ab826083ac60f'));
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->browser->failAfterClick = false;
-        $this->states->resolve('K-001', 'S-005', false, '佐藤'); // 未実行と判定
+        $this->states->resolve('K-001', \Tests\TestCase::SUBMIT, false, '佐藤'); // 未実行と判定
         $orders = count($this->browser->orders());
         $r2 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         // 途中の手順（S-004）は、すでに成功。画面は初期状態に戻っているので、安全のため、止まる（二重には実行しない）

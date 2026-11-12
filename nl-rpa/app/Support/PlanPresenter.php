@@ -27,6 +27,28 @@ final class PlanPresenter
     }
 
     /** @return list<string> 取り消せない手順のID */
+    /**
+     * 取り消せない手順の、手順ID → 状態の表の識別子（EffectId）。状態の表は、AIが振る手順IDではなく、これで引く（9-4）。
+     *
+     * @return array<string,string>
+     */
+    public static function effectMap(\stdClass $plan, array $hashInputs): array
+    {
+        $ids = array_flip(self::irreversibleIds($plan, $hashInputs));
+        $out = [];
+        $walk = function (array $steps) use (&$walk, $ids, &$out): void {
+            foreach ($steps as $s) {
+                isset($s->id, $ids[(string) $s->id]) && $out[(string) $s->id] = \Src\Guard\EffectId::of($s);
+                foreach (['steps', 'then', 'else'] as $k) {
+                    isset($s->{$k}) && is_array($s->{$k}) && $walk($s->{$k});
+                }
+            }
+        };
+        $walk($plan->steps);
+
+        return $out;
+    }
+
     public static function irreversibleIds(\stdClass $plan, array $hashInputs): array
     {
         return OperationPolicy::fromRegistrations($hashInputs['registrations'])->irreversibleStepIds($plan);

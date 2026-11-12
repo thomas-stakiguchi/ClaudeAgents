@@ -136,7 +136,7 @@ class ChromeBrowserTest extends TestCase
             $r2 = $runner->run($plan, $inputs, 'RUN-1', $rows);
             $this->assertSame(RunReport::COMPLETED, $r2->status, implode(' / ', $r2->reasons));
             $this->assertSame(["ABC|1200\n", "DEF|30\n", "GHI|5\n"], file($this->tmp.'/orders.log'));
-            $this->assertSame('succeeded', $states->get('K-003', 'S-005'));
+            $this->assertSame('succeeded', $states->get('K-003', \Tests\TestCase::SUBMIT));
         } finally {
             $browser->close();
         }

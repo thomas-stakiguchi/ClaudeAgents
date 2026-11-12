@@ -6,6 +6,9 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
 {
+    /** スタブの「登録ボタンを押す」操作の、状態の表の識別子（EffectId。接続先 stub・操作 click・対象 submit_button から計算） */
+    public const SUBMIT = 'E-cb6b5609f4dd4e29';
+
     //
 
     /**

@@ -129,13 +129,13 @@ class GuardTest extends TestCase
         return new TestAction($this->guard, $result, $throw);
     }
 
-    private function assertRefused(GuardOutcome $o, TestAction $a, string $needle, string $key = 'K-001'): void
+    private function assertRefused(GuardOutcome $o, TestAction $a, string $needle, string $key = 'K-001', string $effect = \Tests\TestCase::SUBMIT): void
     {
         $this->assertFalse($o->executed);
         $this->assertSame(0, $a->calls, '拒否したのに操作が実行された');
-        $this->assertNull($this->states->get($key, 'S-005'), '拒否したのに「処理中」が残った');
+        $this->assertNull($this->states->get($key, $effect), '拒否したのに「処理中」が残った');
         $this->assertTrue((bool) array_filter($o->reasons, fn ($r) => str_contains($r, $needle)), "「{$needle}」がない: ".implode(' / ', $o->reasons));
-        $this->assertNotNull($this->ledger->latest('refusal', StepStateStore::subject($key, 'S-005')), '拒否の理由が記録されていない');
+        $this->assertNotNull($this->ledger->latest('refusal', StepStateStore::subject($key, $effect)), '拒否の理由が記録されていない');
     }
 
     // ---- 基本 ----
@@ -147,7 +147,7 @@ class GuardTest extends TestCase
         $this->assertSame([], $o->reasons);
         $this->assertTrue($o->executed && $o->confirmed);
         $this->assertSame(1, $a->calls);
-        $this->assertSame('succeeded', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('succeeded', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->assertNull($this->ledger->verify());
     }
 
@@ -162,7 +162,8 @@ class GuardTest extends TestCase
     {
         $this->plan->steps[1]->steps[2]->target = 'delete_button';
         $a = $this->action();
-        $this->assertRefused($this->guard->run($this->req(), $a), $a, '最終承認');
+        // 拒否の記録は、書き換えられた手順の識別子で残る（書き換え前の「成功済み」の記録とは、混ざらない）
+        $this->assertRefused($this->guard->run($this->req(), $a), $a, '最終承認', 'K-001', \Src\Guard\EffectId::of($this->plan->steps[1]->steps[2]));
     }
 
     public function test_承認の記録の形が欠けていれば無効(): void
@@ -410,8 +411,8 @@ class GuardTest extends TestCase
     public function test_前の実行で成功した行は初回の1件に数えない(): void
     {
         // 前の実行（RUN-0。登録なし）で、K-001 が成功している状態
-        $this->states->markProcessing('K-001', 'S-005', 'h', 'RUN-0');
-        $this->states->markSucceeded('K-001', 'S-005');
+        $this->states->markProcessing('K-001', \Tests\TestCase::SUBMIT, 'h', 'RUN-0');
+        $this->states->markSucceeded('K-001', \Tests\TestCase::SUBMIT);
         // 今回の実行 RUN-3（K-001〜K-003）
         $rows = [...$this->rows, ['商品コード' => 'GHI', '数量' => '5', '伝票番号' => 'K-003']];
         $this->assertSame([], $this->register('RUN-3', $rows));
@@ -438,14 +439,14 @@ class GuardTest extends TestCase
         $o = $this->guard->run($this->req(), $this->action(throw: true));
         $this->assertTrue($o->executed);
         $this->assertFalse($o->confirmed);
-        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
     }
 
     public function test_確認条件を満たせなければ要確認になる(): void
     {
         $o = $this->guard->run($this->req(), $this->action(result: false));
         $this->assertFalse($o->confirmed);
-        $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
         $a = $this->action();
         $this->assertFalse($this->guard->run($this->req(), $a)->executed);
         $this->assertSame(0, $a->calls);
@@ -470,9 +471,9 @@ class GuardTest extends TestCase
         $o = $this->guard->run($this->req(), $a);
         $this->assertTrue($o->executed);
         $this->assertFalse($o->confirmed);
-        $this->assertSame('processing', $this->states->get('K-001', 'S-005'));
-        $this->assertNotNull($this->ledger->latest('post_exec_failure', StepStateStore::subject('K-001', 'S-005')), '拒否ではなく、実行後の失敗として記録される');
-        $this->assertNull($this->ledger->latest('refusal', StepStateStore::subject('K-001', 'S-005')));
+        $this->assertSame('processing', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
+        $this->assertNotNull($this->ledger->latest('post_exec_failure', StepStateStore::subject('K-001', \Tests\TestCase::SUBMIT)), '拒否ではなく、実行後の失敗として記録される');
+        $this->assertNull($this->ledger->latest('refusal', StepStateStore::subject('K-001', \Tests\TestCase::SUBMIT)));
         $this->db->pdo->exec('DROP TRIGGER boom2');
         $this->assertSame(1, $this->states->recoverAfterCrash()); // 次の起動時に、要確認になる
     }
@@ -530,7 +531,7 @@ class GuardTest extends TestCase
             $this->assertTrue($thrown, "case {$i}: 裏口から実行できた");
             $this->assertSame(0, $a->calls, "case {$i}");
         }
-        $this->assertNull($this->states->get('K-001', 'S-005'));
+        $this->assertNull($this->states->get('K-001', \Tests\TestCase::SUBMIT));
     }
 
     public function test_本物の証明も使い回せない(): void
@@ -583,7 +584,7 @@ class GuardTest extends TestCase
         };
         $o = $this->guard->run($this->req(), $evil);
         $this->assertFalse($o->executed);
-        $this->assertNull($this->states->get('K-001', 'S-005'));
+        $this->assertNull($this->states->get('K-001', \Tests\TestCase::SUBMIT));
     }
 
     public function test_許可は複製も直列化もできない(): void

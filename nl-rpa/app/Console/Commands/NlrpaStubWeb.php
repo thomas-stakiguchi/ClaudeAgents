@@ -24,6 +24,11 @@ class NlrpaStubWeb extends Command
 
             return self::FAILURE;
         }
+        if (! \Src\Policy\DestinationLimits::isAllowedStubPort($port)) {
+            $this->error('NL_RPA_STUB_PORT は、許可された範囲（8081、または18300〜18399）にしてください');
+
+            return self::FAILURE;
+        }
         $probe = @stream_socket_server("tcp://127.0.0.1:{$port}", $errno, $errstr);
         if ($probe === false) {
             $this->error("ポート {$port} は、使用中です（{$errstr}）");

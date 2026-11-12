@@ -19,7 +19,7 @@ class RunController extends Controller
         // for_each_row の中の、取り消せない手順
         $irr = PlanPresenter::irreversibleIds($p['plan'], $p['inputs']);
 
-        return ['run' => $run, 'p' => $p, 'rows' => (array) ($rec->rows ?? []), 'irr' => $irr];
+        return ['run' => $run, 'p' => $p, 'rows' => (array) ($rec->rows ?? []), 'irr' => $irr, 'effects' => PlanPresenter::effectMap($p['plan'], $p['inputs'])];
     }
 
     public function show(string $runId)
@@ -30,7 +30,7 @@ class RunController extends Controller
         foreach ($d['rows'] as $i => $r) {
             $states = [];
             foreach ($d['irr'] as $sid) {
-                $states[$sid] = $e->states->get($r->business_key, $sid);
+                $states[$sid] = $e->states->get($r->business_key, $d['effects'][$sid] ?? $sid);
             }
             $table[] = ['index' => $i, 'key' => $r->business_key, 'states' => $states];
         }
@@ -56,7 +56,7 @@ class RunController extends Controller
         foreach ($d['rows'] as $r) {
             $parts = [];
             foreach ($d['irr'] as $sid) {
-                $parts[] = $sid.'：'.($stateNames[$this->engine->states->get($r->business_key, $sid)] ?? '未実行');
+                $parts[] = $sid.'：'.($stateNames[$this->engine->states->get($r->business_key, $d['effects'][$sid] ?? $sid)] ?? '未実行');
             }
             $rowStates[$r->business_key] = implode('、', $parts);
         }
@@ -137,7 +137,7 @@ class RunController extends Controller
         foreach ($d['rows'] as $r) {
             $row = [$r->business_key];
             foreach ($d['irr'] as $sid) {
-                $row[] = $names[$this->engine->states->get($r->business_key, $sid)] ?? '未実行';
+                $row[] = $names[$this->engine->states->get($r->business_key, $d['effects'][$sid] ?? $sid)] ?? '未実行';
             }
             foreach ($readKeys as $k) {
                 $row[] = (string) ($latest[$r->business_key]['reads'][$k] ?? '');
@@ -182,7 +182,7 @@ class RunController extends Controller
     {
         $by = $this->operator($request);
         $d = $this->load($runId);
-        $err = PlanRunner::recordFirstRowConfirmation($this->engine->ledger, $this->engine->states, $runId, $d['rows'], $d['irr'], $by, $this->osUser());
+        $err = PlanRunner::recordFirstRowConfirmation($this->engine->ledger, $this->engine->states, $runId, $d['rows'], array_values($d['effects']), $by, $this->osUser());
         if ($err !== null) {
             return back()->withErrors(['confirm' => $err]);
         }
@@ -203,10 +203,11 @@ class RunController extends Controller
             return back()->withErrors(['resolve' => '対象が正しくありません']);
         }
         // 判定できるのは「要確認」だけ。「処理中」は、ワーカーが動いている間かもしれない。先に nlrpa:recover で「要確認」にする
-        if ($this->engine->states->get($key, $step) !== StepStateStore::NEEDS_REVIEW) {
+        $effect = $d['effects'][$step] ?? $step;
+        if ($this->engine->states->get($key, $effect) !== StepStateStore::NEEDS_REVIEW) {
             return back()->withErrors(['resolve' => '「要確認」ではありません（「処理中」は、ワーカーが止まっていることを確かめて、php artisan nlrpa:recover を実行してから判定してください）']);
         }
-        $this->engine->states->resolve($key, $step, $verdict === 'executed', $by.' ('.$this->osUser().')');
+        $this->engine->states->resolve($key, $effect, $verdict === 'executed', $by.' ('.$this->osUser().')');
 
         return back()->with('ok', '判定を記録しました');
     }

@@ -242,14 +242,14 @@ class WebTest extends TestCase
         $out = $this->worker($this->lastRequestId());
         $this->assertStringContainsString('awaiting_first_row_confirmation', $out);
         $this->get($this->base."/runs/{$runId}")->assertOk()->assertSee('成功');
-        $this->assertSame('succeeded', $this->engine()->states->get('K-001', 'S-005'));
-        $this->assertNull($this->engine()->states->get('K-002', 'S-005'));
+        $this->assertSame('succeeded', $this->engine()->states->get('K-001', \Tests\TestCase::SUBMIT));
+        $this->assertNull($this->engine()->states->get('K-002', \Tests\TestCase::SUBMIT));
 
         $this->post2("/runs/{$runId}/confirm-first")->assertSessionHasNoErrors();
         $this->post2("/runs/{$runId}/start")->assertSessionHasNoErrors();
         $this->assertStringContainsString('completed', $this->worker($this->lastRequestId()));
         foreach (['K-001', 'K-002', 'K-003'] as $k) {
-            $this->assertSame('succeeded', $this->engine()->states->get($k, 'S-005'));
+            $this->assertSame('succeeded', $this->engine()->states->get($k, \Tests\TestCase::SUBMIT));
         }
         $this->assertNull($this->engine()->ledger->verify());
     }
@@ -283,12 +283,12 @@ class WebTest extends TestCase
         $this->login();
         [$hash, $runId] = $this->preparedRun();
         // 1件目の取り消せない操作の直前に処理中を書いたまま、異常終了した状態
-        $this->engine()->states->markProcessing('K-001', 'S-005', $hash, $runId);
+        $this->engine()->states->markProcessing('K-001', \Tests\TestCase::SUBMIT, $hash, $runId);
         Artisan::call('nlrpa:recover');
-        $this->assertSame('needs_review', $this->engine()->states->get('K-001', 'S-005'));
+        $this->assertSame('needs_review', $this->engine()->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->get($this->base."/runs/{$runId}")->assertSee('要確認');
         $this->post2("/runs/{$runId}/resolve", ['business_key' => 'K-001', 'step_id' => 'S-005', 'verdict' => 'executed'])->assertSessionHasNoErrors();
-        $this->assertSame('succeeded', $this->engine()->states->get('K-001', 'S-005'));
+        $this->assertSame('succeeded', $this->engine()->states->get('K-001', \Tests\TestCase::SUBMIT));
         // 成功は、判定できない。計画にない手順・行も、判定できない
         $this->post2("/runs/{$runId}/resolve", ['business_key' => 'K-001', 'step_id' => 'S-005', 'verdict' => 'not_executed'])->assertSessionHasErrors('resolve');
         $this->post2("/runs/{$runId}/resolve", ['business_key' => 'K-999', 'step_id' => 'S-005', 'verdict' => 'executed'])->assertSessionHasErrors('resolve');
@@ -327,7 +327,7 @@ class WebTest extends TestCase
         $this->post2("/runs/{$runId}/start");
         $out = $this->worker($this->lastRequestId());
         $this->assertStringContainsString('halted', $out);
-        $this->assertNull($this->engine()->states->get('K-001', 'S-005'));
+        $this->assertNull($this->engine()->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->post2('/stop/clear')->assertSessionHasNoErrors();
     }
 
@@ -449,17 +449,17 @@ class WebTest extends TestCase
         $this->post2("/runs/{$run2}/confirm-first")->assertSessionHasErrors('confirm'); // 前の実行の成功は、この実行の初回に数えない
         $this->post2("/runs/{$run2}/start");
         $this->assertStringContainsString('awaiting_first_row_confirmation', $this->worker($this->lastRequestId()));
-        $this->assertSame('succeeded', $this->engine()->states->get('K-004', 'S-005'));
-        $this->assertNull($this->engine()->states->get('K-005', 'S-005'), '新しい行は、1件だけ実行して止まる');
+        $this->assertSame('succeeded', $this->engine()->states->get('K-004', \Tests\TestCase::SUBMIT));
+        $this->assertNull($this->engine()->states->get('K-005', \Tests\TestCase::SUBMIT), '新しい行は、1件だけ実行して止まる');
     }
 
     public function test_処理中は画面から判定できない(): void
     {
         $this->login();
         [$hash, $runId] = $this->preparedRun();
-        $this->engine()->states->markProcessing('K-001', 'S-005', $hash, $runId);
+        $this->engine()->states->markProcessing('K-001', \Tests\TestCase::SUBMIT, $hash, $runId);
         $this->post2("/runs/{$runId}/resolve", ['business_key' => 'K-001', 'step_id' => 'S-005', 'verdict' => 'not_executed'])->assertSessionHasErrors('resolve');
-        $this->assertSame('processing', $this->engine()->states->get('K-001', 'S-005'));
+        $this->assertSame('processing', $this->engine()->states->get('K-001', \Tests\TestCase::SUBMIT));
         $this->get($this->base."/runs/{$runId}")->assertSee('nlrpa:recover')->assertDontSee('判定する');
     }
 
@@ -796,10 +796,8 @@ class WebTest extends TestCase
         if ($chrome === null || ! is_file($chrome)) {
             $this->skipOrFail('Chromeが見つかりません');
         }
-        $s = stream_socket_server('tcp://127.0.0.1:0');
-        $port = (int) explode(':', stream_socket_get_name($s, false))[1];
-        fclose($s);
-        config(['nlrpa.browser' => 'chrome', 'nlrpa.chrome_binary' => $chrome, 'nlrpa.chrome_no_sandbox' => true, 'nlrpa.stub_port' => $port]);
+        $port = $this->freeAllowedStubPort();
+        config(['nlrpa.browser' => 'chrome', 'nlrpa.chrome_binary' => $chrome, 'nlrpa.chrome_no_sandbox' => true, 'nlrpa.stub_port' => $port, 'nlrpa.chrome_allowed_major' => $this->chromeMajor($chrome)]);
         $this->engine(); // データの置き場を作る
         $proc = proc_open([PHP_BINARY, '-S', "127.0.0.1:{$port}", base_path('stubs/web/router.php')], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $p, base_path('stubs/web'), array_merge(getenv(), ['ORDER_LOG' => $this->engine()->stubOrdersLog()]));
         $this->stubProc = $proc;
@@ -864,7 +862,7 @@ class WebTest extends TestCase
             $this->assertStringContainsString('completed', $this->worker($this->lastRequestId()));
             $this->assertSame(['ABC|1200', 'DEF|30', 'GHI|5'], array_map('trim', file($this->engine()->stubOrdersLog())));
             foreach (['K-001', 'K-002', 'K-003'] as $k) {
-                $this->assertSame('succeeded', $this->engine()->states->get($k, 'S-005'));
+                $this->assertSame('succeeded', $this->engine()->states->get($k, \Tests\TestCase::SUBMIT));
             }
             // 使い捨てプロファイルは、すべて破棄され、記録も残っていない。Chromeも残っていない
             $this->assertSame([], glob($this->engine()->profileRoot().'/profile-*') ?: []);
@@ -914,9 +912,33 @@ class WebTest extends TestCase
         $this->engine();
     }
 
+    /** 使うChromeのメジャーバージョン（chrome --version の出力から） */
+    private function chromeMajor(string $chrome): string
+    {
+        preg_match('/(\d+)\./', (string) shell_exec(escapeshellarg($chrome).' --version 2>/dev/null'), $m);
+
+        return $m[1] ?? '0';
+    }
+
+    /** 許可されたスタブのポートのうち、いま空いているもの（18300〜18399の中から、ランダムに） */
+    private function freeAllowedStubPort(): int
+    {
+        $c = range(18300, 18399);
+        shuffle($c);
+        foreach ($c as $p) {
+            $s = @stream_socket_server("tcp://127.0.0.1:{$p}");
+            if ($s !== false) {
+                fclose($s);
+
+                return $p;
+            }
+        }
+        $this->fail('許可された範囲に、空いているポートがありません');
+    }
+
     public function test_スタブの画面のポートが不正なら拒否する(): void
     {
-        foreach ([0, 70000, 8080] as $bad) {
+        foreach ([0, 70000, 8080, 5432, 22] as $bad) {
             config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => $bad]);
             $this->app->forgetInstance(Engine::class);
             $thrown = false;
@@ -997,7 +1019,7 @@ class WebTest extends TestCase
 
     public function test_許可するChromeのバージョンの指定が不正なら_最初の時点で止まる(): void
     {
-        foreach (['abc', ',,', '153.0', '0', '153,,154', '-1', '153;rm'] as $bad) {
+        foreach (['', 'abc', ',,', '153.0', '0', '153,,154', '-1', '153;rm'] as $bad) { // 空（未指定）も、不可（14-2）
             config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => 18320, 'nlrpa.chrome_allowed_major' => $bad, 'nlrpa.chrome_binary' => '/bin/true']);
             $this->app->forgetInstance(Engine::class);
             $thrown = false;
@@ -1031,7 +1053,7 @@ class WebTest extends TestCase
         $input = $this->csv($rows);
         $this->post2("/plans/{$hash}/dry-run", ['input_set_id' => $input])->assertSessionHasNoErrors();
         $req = $this->lastRequestId();
-        $env = array_merge(getenv(), ['NL_RPA_DATA_DIR' => $this->dir, 'NL_RPA_BROWSER' => 'chrome', 'NL_RPA_CHROME' => $chrome, 'NL_RPA_CHROME_NO_SANDBOX' => 'true', 'NL_RPA_STUB_PORT' => (string) $port, 'APP_DEBUG' => 'false']);
+        $env = array_merge(getenv(), ['NL_RPA_DATA_DIR' => $this->dir, 'NL_RPA_BROWSER' => 'chrome', 'NL_RPA_CHROME' => $chrome, 'NL_RPA_CHROME_NO_SANDBOX' => 'true', 'NL_RPA_CHROME_MAJOR' => $this->chromeMajor($chrome), 'NL_RPA_STUB_PORT' => (string) $port, 'APP_DEBUG' => 'false']);
         $proc = proc_open([PHP_BINARY, base_path('artisan'), 'nlrpa:worker', (string) $req], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $p, base_path(), $env);
         $pid = proc_get_status($proc)['pid'];
         $dir = '';
@@ -1319,7 +1341,7 @@ class WebTest extends TestCase
         $page->assertSee('S-005：成功');
         $this->assertStringNotContainsString('>skipped<', $page->getContent());
         // 人が「要確認」を解決したら、画面の状態も、変わる
-        $this->engine()->states->markProcessing('K-009', 'S-005', $hash, $runId);
+        $this->engine()->states->markProcessing('K-009', \Tests\TestCase::SUBMIT, $hash, $runId);
     }
 
     public function test_結果の保存は_不正なUTF8が入っても失敗しない(): void

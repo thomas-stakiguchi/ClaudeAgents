@@ -177,7 +177,7 @@ final class PlanRunner
             foreach ($this->ledger->latestPerSubject('run') as $other) {
                 $o = $other['payload'];
                 if ($other['subject'] !== $runId && ($o->plan_hash ?? null) === $ctx->hash && is_array($o->rows ?? null)
-                    && $this->gate->awaitingConfirmation($other['subject'], $o->rows, $ctx->irreversible)) {
+                    && $this->gate->awaitingConfirmation($other['subject'], $o->rows, $this->effectIds($ctx, $ctx->plan->steps))) {
                     return $this->refuse("別の実行（{$other['subject']}）の初回の1件が、確認されていません。先に確認してください");
                 }
             }
@@ -250,6 +250,23 @@ final class PlanRunner
         if ($unsupported !== null) {
             return "1aでは実行できない操作が含まれています: {$unsupported}";
         }
+        // 同じ接続先・同じ操作・同じ対象の、取り消せない手順が、計画に2つあれば、始めない（状態の表で、区別できないため。9-4）
+        $seenEffects = [];
+        $dupEffect = $this->firstStepWhere($copy->steps, static function (\stdClass $s) use ($irreversibleIds, &$seenEffects): bool {
+            if (! in_array($s->id ?? null, $irreversibleIds, true)) {
+                return false;
+            }
+            $e = \Src\Guard\EffectId::of($s);
+            if (isset($seenEffects[$e])) {
+                return true;
+            }
+            $seenEffects[$e] = true;
+
+            return false;
+        });
+        if ($dupEffect !== null) {
+            return "同じ接続先・操作・対象の、取り消せない手順が、計画に2つあります: {$dupEffect}";
+        }
         $outside = [];
         foreach ($copy->steps as $top) {
             if (($top->action ?? null) !== 'for_each_row') {
@@ -292,7 +309,7 @@ final class PlanRunner
                 }
                 continue;
             }
-            $loopIrr = array_values(array_filter($this->stepIds($top->steps), static fn (string $id): bool => in_array($id, $ctx->irreversible, true)));
+            $loopIrr = $this->effectIds($ctx, $top->steps);
             foreach ($rows as $i => $values) {
                 $wasFirst = false;
                 $key = (string) ($values[$ctx->keyCol] ?? '');
@@ -398,7 +415,7 @@ final class PlanRunner
     /** その行の、取り消せない手順がすべて「成功」か */
     private function allSucceeded(\stdClass $ctx, string $key, \stdClass $loop): bool
     {
-        $ids = array_values(array_filter($this->stepIds($loop->steps), static fn (string $id): bool => in_array($id, $ctx->irreversible, true)));
+        $ids = $this->effectIds($ctx, $loop->steps);
         if ($ids === []) {
             return false;
         }
@@ -409,6 +426,27 @@ final class PlanRunner
         }
 
         return true;
+    }
+
+    /**
+     * 取り消せない手順の、状態の表の識別子（EffectId）。AIが振る手順IDではなく、接続先・操作・対象から、エンジンが計算する（9-4）。
+     *
+     * @param array<mixed> $steps
+     * @return list<string>
+     */
+    private function effectIds(\stdClass $ctx, array $steps): array
+    {
+        $out = [];
+        foreach ($steps as $s) {
+            if ($s instanceof \stdClass) {
+                isset($s->id) && in_array($s->id, $ctx->irreversible, true) && $out[] = \Src\Guard\EffectId::of($s);
+                foreach (['steps', 'then', 'else'] as $k) {
+                    isset($s->{$k}) && is_array($s->{$k}) && array_push($out, ...$this->effectIds($ctx, $s->{$k}));
+                }
+            }
+        }
+
+        return array_values(array_unique($out));
     }
 
     /** @param array<mixed> $steps @return list<string> */

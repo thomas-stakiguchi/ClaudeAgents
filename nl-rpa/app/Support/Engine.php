@@ -197,6 +197,10 @@ final class Engine
             throw new \RuntimeException('NL_RPA_STUB_PORT は、1〜65535 で、アプリ自身のポートとは別にしてください（14-4）');
         }
 
+        if (! \Src\Policy\DestinationLimits::isAllowedStubPort($port)) {
+            throw new \RuntimeException("NL_RPA_STUB_PORT は、許可された範囲（8081、または18300〜18399）にしてください（SEC-6。{$port}）");
+        }
+
         return 'http://localhost:'.$port;
     }
 
@@ -208,10 +212,13 @@ final class Engine
         }
         $origin = $this->stubOrigin();
         $raw = trim((string) ($this->browser['allowed_major'] ?? ''));
-        if ($raw !== '' && ! preg_match('/\A[1-9][0-9]*(,[1-9][0-9]*)*\z/', $raw)) {
+        if ($raw === '') {
+            throw new \RuntimeException('本物のChromeを使うときは、NL_RPA_CHROME_MAJOR（許可するメジャーバージョン。例：153）が必要です（14-2。範囲外のChromeでは動かさない）');
+        }
+        if (! preg_match('/\A[1-9][0-9]*(,[1-9][0-9]*)*\z/', $raw)) {
             throw new \RuntimeException('NL_RPA_CHROME_MAJOR は、メジャーバージョンの数字を、カンマ区切りで指定してください（例：153,154）');
         }
-        $major = $raw === '' ? [] : array_map('intval', explode(',', $raw));
+        $major = array_map('intval', explode(',', $raw));
 
         return new ChromeBrowser(
             (string) (($this->browser['binary'] ?? null) ?: ChromeBrowser::discoverBinary()),
@@ -224,7 +231,7 @@ final class Engine
             $this->environmentName(),
             (bool) ($this->browser['no_sandbox'] ?? false),
             $this->profileNotifier(),
-            $major === [] ? null : $major,
+            $major,
         );
     }
 
