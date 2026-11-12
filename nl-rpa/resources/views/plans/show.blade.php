@@ -36,6 +36,7 @@
 <h2>前の計画との差分</h2>
 <div class="card">
   @if ($prevHash === null) <p>比べる、前の計画は、ありません。</p> @else
+    @if (! $prevSameId) <p class="warn">前の計画は、<strong>別の計画（plan_id が違う）</strong>です。</p> @endif
     <p>前の計画 <code>{{ substr($prevHash, 0, 23) }}…</code>@if ($prevApproved)（最終承認済み）@endif との差分：<strong>{{ $changeCount }}</strong> 件（重要 <strong>{{ $importantCount }}</strong> 件）。
        <a href="/plans/{{ $p['hash'] }}/diff">差分を見る</a></p>
   @endif

@@ -35,32 +35,36 @@ class RunController extends Controller
             $table[] = ['index' => $i, 'key' => $r->business_key, 'states' => $states];
         }
         $requests = [];
-        foreach ($e->store->requestsOfRun($runId) as $q) {
+        foreach ($e->store->requestsOfRun($runId, 50) as $q) {
             $q['result'] = $q['result_json'] ? json_decode($q['result_json'], true) : null;
             $requests[] = $q;
         }
 
-        // 業務キーごとの、最新の結果（新しい要求から順に見て、最初に見つかったもの）と、最新の要求の手順ごとの結果
-        $latest = [];
+        // 業務キーごとの、最新の「実行した」結果（新しい要求から順に見て、skipped を除いた、最初のもの）と、最新の要求の手順ごとの結果。
+        // skipped（前の呼び出しで成功済みで、今回は飛ばした行）は、読んだ値を持たないため、古い結果を消さないよう、除く
+        [$latest, $readKeys] = $this->collectLatest($requests);
         $stepRows = null;
         foreach ($requests as $q) {
-            foreach ($q['result']['rows'] ?? [] as $row) {
-                $latest[$row['business_key']] ??= $row;
-            }
-            if ($stepRows === null && ! empty($q['result']['rows'])) {
+            if (! empty($q['result']['rows'])) {
                 $stepRows = $q['result']['rows'];
+                break;
             }
         }
-        $readKeys = [];
-        foreach ($latest as $row) {
-            foreach (array_keys($row['reads'] ?? []) as $k) {
-                $readKeys[$k] = true;
+        // 状態は、状態の表（step_states）から出す。要求の結果の status は、その時点のもので、人が「要確認」を解決したあとは、古くなる
+        $stateNames = ['succeeded' => '成功', 'failed' => '失敗（再実行の対象）', 'needs_review' => '要確認', 'processing' => '処理中'];
+        $rowStates = [];
+        foreach ($d['rows'] as $r) {
+            $parts = [];
+            foreach ($d['irr'] as $sid) {
+                $parts[] = $sid.'：'.($stateNames[$this->engine->states->get($r->business_key, $sid)] ?? '未実行');
             }
+            $rowStates[$r->business_key] = implode('、', $parts);
         }
 
         return view('runs.show', $d + [
             'latest' => $latest,
-            'readKeys' => array_keys($readKeys),
+            'readKeys' => $readKeys,
+            'rowStates' => $rowStates,
             'stepRows' => $stepRows ?? [],
             'table' => $table,
             'requests' => $requests,
@@ -72,35 +76,68 @@ class RunController extends Controller
     }
 
     /**
-     * 結果のCSV（5章の10）。業務キー、手順ごとの状態、画面から読んだ値。
-     * 値が「=」「+」「-」「@」、タブ、CRで始まる場合は、先頭に「'」を付けて、表計算ソフトで、式として実行されないようにする（SEC-14）。
+     * 業務キーごとの、最新の「実行した」結果と、読んだ値の項目名。
+     *
+     * @param list<array<string,mixed>> $requests 新しい順。各要求は、'result' を持つ
+     * @return array{0:array<string,array<string,mixed>>, 1:list<string>}
+     */
+    private function collectLatest(array $requests): array
+    {
+        $latest = [];
+        foreach ($requests as $q) {
+            foreach ($q['result']['rows'] ?? [] as $row) {
+                if (($row['status'] ?? '') === 'skipped') {
+                    continue; // 飛ばした行は、結果を持たない。古い結果を、消さない
+                }
+                $latest[$row['business_key']] ??= $row;
+            }
+        }
+        $keys = [];
+        foreach ($latest as $row) {
+            foreach (array_keys($row['reads'] ?? []) as $k) {
+                $keys[$k] = true;
+            }
+        }
+
+        return [$latest, array_keys($keys)];
+    }
+
+    /**
+     * CSVの1つのセルを、表計算ソフトで式として実行されないようにする（SEC-14）。
+     * 先頭の空白・改行・制御文字・全角の空白を飛ばした、最初の文字が「=」「+」「-」「@」（全角を含む）なら、先頭に「'」を付ける。
+     * 先頭が、タブ・CR・LF の場合も、付ける。不正なUTF-8は、置き換える。
+     */
+    public static function csvSafe(string $v): string
+    {
+        $v = mb_scrub($v, 'UTF-8');
+        if (preg_match('/\A[\t\r\n]/u', $v) || preg_match('/\A[\s\x00-\x1f\x{3000}\x{00a0}\x{200b}\x{feff}]*[=+\-@＝＋－＠]/u', $v)) {
+            return "'".$v;
+        }
+
+        return $v;
+    }
+
+    /**
+     * 結果のCSV（5章の10）。業務キー、手順ごとの状態、画面から読んだ値。値のエスケープは csvSafe（SEC-14）。
+     * 注意：読んだ値は、personal_info のマスクの対象外で、そのまま出る（SEC-9の方針は、1bの前に決める）。
      */
     public function csv(string $runId)
     {
         $d = $this->load($runId);
-        $reqs = $this->engine->store->requestsOfRun($runId, 50);
-        $latest = [];
-        foreach ($reqs as $q) {
-            $res = $q['result_json'] ? json_decode($q['result_json'], true) : null;
-            foreach ($res['rows'] ?? [] as $row) {
-                $latest[$row['business_key']] ??= $row;
-            }
+        $requests = [];
+        foreach ($this->engine->store->requestsOfRun($runId, 50) as $q) {
+            $q['result'] = $q['result_json'] ? json_decode($q['result_json'], true) : null;
+            $requests[] = $q;
         }
-        $readKeys = [];
-        foreach ($latest as $row) {
-            foreach (array_keys($row['reads'] ?? []) as $k) {
-                $readKeys[$k] = true;
-            }
-        }
-        $readKeys = array_keys($readKeys);
-        $names = ['succeeded' => '成功', 'failed' => '失敗', 'needs_review' => '要確認', 'processing' => '処理中', null => '未実行'];
-        $safe = static fn (string $v): string => preg_match('/\A[=+\-@\t\r]/', $v) ? "'".$v : $v;
+        [$latest, $readKeys] = $this->collectLatest($requests);
+        $names = ['succeeded' => '成功', 'failed' => '失敗', 'needs_review' => '要確認', 'processing' => '処理中'];
+        $safe = static fn (string $v): string => self::csvSafe($v);
         $header = array_merge(['業務キー'], array_map(fn ($sid) => "状態 {$sid}", $d['irr']), array_map(fn ($k) => "読んだ値 {$k}", $readKeys));
         $lines = [$header];
         foreach ($d['rows'] as $r) {
             $row = [$r->business_key];
             foreach ($d['irr'] as $sid) {
-                $row[] = $names[$this->engine->states->get($r->business_key, $sid)] ?? '?';
+                $row[] = $names[$this->engine->states->get($r->business_key, $sid)] ?? '未実行';
             }
             foreach ($readKeys as $k) {
                 $row[] = (string) ($latest[$r->business_key]['reads'][$k] ?? '');

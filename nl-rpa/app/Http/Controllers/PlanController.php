@@ -50,8 +50,13 @@ class PlanController extends Controller
             : '許可リスト・個別登録が、この計画を作ったときから変わっています。計画を作り直して、あらためて承認してください';
     }
 
-    /** 比べる相手の既定：最新の「最終承認がある」古い計画。なければ、直前の（古い）計画。なければ null */
-    private function previousPlanHash(string $hash): ?string
+    /**
+     * 比べる相手の既定：同じ plan_id の、古い計画のうち、最新の「最終承認がある」もの。なければ、同じ plan_id の、直前の古い計画。
+     * 同じ plan_id がなければ、別の計画の中から、同じ基準で選ぶ（その場合、$sameId は false。画面に、その旨を出す）。
+     *
+     * @return array{0:string|null, 1:bool} [計画ハッシュ, 同じ plan_id か]
+     */
+    private function previousPlan(string $hash): array
     {
         $all = $this->engine->store->listPlans(); // 新しい順
         $idx = null;
@@ -61,17 +66,30 @@ class PlanController extends Controller
                 break;
             }
         }
-        if ($idx === null) {
-            return null;
+        $me = $idx !== null ? $this->engine->store->getPlan($hash) : null;
+        if ($me === null) {
+            return [null, true];
         }
-        $older = array_slice($all, $idx + 1);
+        $older = array_slice($all, $idx + 1, 100);
+        $same = [];
         foreach ($older as $row) {
-            if ($this->engine->approvals->hasAnyFinalApproval($row['hash'])) {
-                return $row['hash'];
+            $p = $this->engine->store->getPlan($row['hash']);
+            if ($p !== null && ($p['plan']->plan_id ?? null) === ($me['plan']->plan_id ?? null)) {
+                $same[] = $row['hash'];
+            }
+        }
+        foreach ([[$same, true], [array_column($older, 'hash'), false]] as [$cands, $sameId]) {
+            foreach ($cands as $h) {
+                if ($this->engine->approvals->hasAnyFinalApproval($h)) {
+                    return [$h, $sameId];
+                }
+            }
+            if ($cands !== []) {
+                return [$cands[0], $sameId];
             }
         }
 
-        return $older[0]['hash'] ?? null;
+        return [null, true];
     }
 
     /** 2つの計画の差分（R3）。比べる相手は、?against= で指定（既定は、前の計画） */
@@ -79,12 +97,18 @@ class PlanController extends Controller
     {
         $new = $this->engine->store->getPlan($hash) ?? abort(404);
         $againstQ = $request->query('against');
-        $against = is_string($againstQ) && preg_match('/\Asha256:[0-9a-f]{64}\z/', $againstQ) ? $againstQ : $this->previousPlanHash($hash);
+        $sameId = true;
+        if (is_string($againstQ) && preg_match('/\Asha256:[0-9a-f]{64}\z/', $againstQ)) {
+            $against = $againstQ;
+        } else {
+            [$against, $sameId] = $this->previousPlan($hash);
+        }
         $old = $against !== null ? $this->engine->store->getPlan($against) : null;
+        $sameId = $sameId && ($old === null || ($old['plan']->plan_id ?? null) === ($new['plan']->plan_id ?? null));
         $changes = $old !== null ? PlanDiff::compare($old['plan'], $old['inputs'], $new['plan'], $new['inputs']) : [];
 
         return view('plans.diff', [
-            'p' => $new, 'old' => $old, 'changes' => $changes,
+            'p' => $new, 'old' => $old, 'changes' => $changes, 'sameId' => $sameId,
             'oldApproved' => $old !== null && $this->engine->approvals->hasAnyFinalApproval($old['hash']),
             'others' => array_values(array_filter($this->engine->store->listPlans(), fn ($r) => $r['hash'] !== $hash)),
         ]);
@@ -99,7 +123,7 @@ class PlanController extends Controller
             $dry[] = (array) $d;
         }
 
-        $prev = $this->previousPlanHash($hash);
+        [$prev, $prevSameId] = $this->previousPlan($hash);
         $prevPlan = $prev !== null ? $e->store->getPlan($prev) : null;
         $changes = $prevPlan !== null ? PlanDiff::compare($prevPlan['plan'], $prevPlan['inputs'], $p['plan'], $p['inputs']) : [];
         $requests = [];
@@ -111,6 +135,7 @@ class PlanController extends Controller
         return view('plans.show', [
             'columns' => $p['plan']->input->columns,
             'prevHash' => $prev,
+            'prevSameId' => $prevSameId,
             'prevApproved' => $prev !== null && $e->approvals->hasAnyFinalApproval($prev),
             'changeCount' => count($changes),
             'importantCount' => count(array_filter($changes, fn ($c) => $c['important'])),

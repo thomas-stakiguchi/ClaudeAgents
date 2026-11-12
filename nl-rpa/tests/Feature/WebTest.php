@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Support\AccessToken;
 use App\Support\Engine;
+use App\Http\Controllers\RunController;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Tests\TestCase;
@@ -1169,7 +1170,10 @@ class WebTest extends TestCase
         $this->assertStringNotContainsString('手順 S-005 / target', $r->getContent());
         // 比べる相手を指定できる。不正な指定は、無視して、既定に戻る
         $this->get($this->base."/plans/{$hash1}/diff?against={$hash2}")->assertOk()->assertSee('変更');
-        $this->get($this->base."/plans/{$hash2}/diff?against=../../etc/passwd")->assertOk();
+        // 不正な指定は、無視して、既定（前の計画）に戻る。パスは、使われない
+        $bad = $this->get($this->base."/plans/{$hash2}/diff?against=../../etc/passwd")->assertOk()->getContent();
+        $this->assertStringContainsString('比べる計画：<code>'.$hash1.'</code>', $bad);
+        $this->assertStringNotContainsString('etc/passwd', $bad);
         $this->get($this->base."/plans/{$hash2}/diff?against=sha256:".str_repeat('f', 64))->assertOk()->assertSee('比べる計画が、ありません');
         $this->get($this->base.'/plans/sha256:'.str_repeat('0', 64).'/diff')->assertNotFound();
         // 自分自身との比較は、差分なし
@@ -1187,10 +1191,14 @@ class WebTest extends TestCase
         $dry = $this->engine()->store->getRequest($req)['dry_run_id'];
         $this->post2("/plans/{$h1}/approve-final", ['dry_run_id' => $dry]);
         $h2 = $this->createPlan('発注管理システムにログインする。'); // 承認のない、新しい計画
-        $h3 = $this->createPlan('発注管理システムにログインする。\n別の文。'); // さらに、新しい計画
+        $h3 = $this->createPlan("発注管理システムにログインする。\n別の文。"); // さらに、新しい計画
         $r = $this->get($this->base."/plans/{$h3}")->assertOk();
         $r->assertSee('最終承認済み'); // 比べる相手は、最終承認のある h1（直前の h2 ではない）
-        $this->get($this->base."/plans/{$h3}/diff")->assertOk()->assertSee(substr($h1, 0, 23));
+        // 「比べる計画：」の行と、選ばれている選択肢で、比べる相手が h1 であることを確かめる（選択肢には、他の全計画が出る）
+        $html = $this->get($this->base."/plans/{$h3}/diff")->assertOk()->getContent();
+        $this->assertStringContainsString('比べる計画：<code>'.$h1.'</code>', $html);
+        $this->assertStringNotContainsString('比べる計画：<code>'.$h2.'</code>', $html);
+        $this->assertMatchesRegularExpression('/<option value="'.preg_quote($h1, '/').'" selected>/', $html);
     }
 
     public function test_業務キーの列が計画とプレビューに表示される(): void
@@ -1250,6 +1258,7 @@ class WebTest extends TestCase
         }
         $this->assertSame("'=HYPERLINK(\"http://evil.example\",\"x\")", $byKey['K-001'][2], '式で始まる値は、先頭に「\'」を付ける');
         $this->assertSame("'+1+1", $byKey['K-002'][2]);
+        $this->assertSame('x', RunController::csvSafe('x'));
         $this->assertSame("'\t@SUM(A1)", $byKey['K-003'][2]);
         $this->assertSame('成功', $byKey['K-001'][1]);
         // 認証なしでは、ダウンロードできない
@@ -1274,5 +1283,77 @@ class WebTest extends TestCase
         $body = $this->get($this->base."/runs/{$runId}/result.csv")->streamedContent();
         $this->assertStringContainsString("'=cmd|'/C'!A0", $body);
         $this->assertStringNotContainsString("\n=cmd", $body);
+    }
+
+    public function test_CSVのエスケープ_先頭が空白や改行や全角でも式にならない(): void
+    {
+        foreach (["\n=1+1", ' =1+1', "  \t=1", '＝1+1', '＋1', '－1', '＠SUM', "\u{3000}=1", "\x00=1", "\n", "\r=1", "\t=1", "\u{feff}=1", "\u{a0}@x", '=1', '+1', '-1', '@x'] as $v) {
+            $out = RunController::csvSafe($v);
+            $this->assertStringStartsWith("'", $out, json_encode($v));
+        }
+        foreach (['ORD-0001', '', 'abc=1', '1+1', 'ABC 123', '12', 'あいう', "a\n=1"] as $v) {
+            $this->assertSame($v, RunController::csvSafe($v), json_encode($v));
+        }
+        // 不正なUTF-8は、置き換わる（例外にならない）
+        $this->assertTrue(mb_check_encoding(RunController::csvSafe("=\xff"), 'UTF-8'));
+    }
+
+    public function test_再実行で行を飛ばしても_前の実行の読んだ値は消えない_状態は状態の表から出る(): void
+    {
+        $this->login();
+        [$hash, $runId] = $this->preparedRun();
+        $this->post2("/runs/{$runId}/start");
+        $this->worker($this->lastRequestId()); // 1行目だけ実行（ORD-0001）
+        $this->post2("/runs/{$runId}/confirm-first");
+        $this->post2("/runs/{$runId}/start");
+        $this->worker($this->lastRequestId()); // 2回目：1行目は、飛ばす（skipped）
+        $page = $this->get($this->base."/runs/{$runId}")->assertOk();
+        // 偽の部品の発注番号は、ワーカー（プロセス）ごとに、1から数える。1回目のワーカーが K-001＝ORD-0001、2回目のワーカーが K-002＝ORD-0001、K-003＝ORD-0002
+        $page->assertSee('ORD-0001')->assertSee('ORD-0002');
+        $body = $this->get($this->base."/runs/{$runId}/result.csv")->streamedContent();
+        $this->assertStringContainsString('K-001,成功,ORD-0001', $body, '1行目の読んだ値が、再実行（skipped）で消えた');
+        $this->assertStringContainsString('K-002,成功,ORD-0001', $body);
+        $this->assertStringContainsString('K-003,成功,ORD-0002', $body);
+        $this->assertMatchesRegularExpression('#<td>K-001</td><td>S-005：成功</td><td>ORD-0001</td>#', preg_replace('/\s+/', '', str_replace(['<td> ', ' </td>'], ['<td>', '</td>'], $page->getContent())) === null ? '' : $page->getContent());
+        // 画面の状態は、状態の表から出す（結果の status の英語は、出ない）
+        $page->assertSee('S-005：成功');
+        $this->assertStringNotContainsString('>skipped<', $page->getContent());
+        // 人が「要確認」を解決したら、画面の状態も、変わる
+        $this->engine()->states->markProcessing('K-009', 'S-005', $hash, $runId);
+    }
+
+    public function test_結果の保存は_不正なUTF8が入っても失敗しない(): void
+    {
+        $this->engine();
+        $hash = $this->createPlanForStore();
+        $id = $this->engine()->store->createRequest('dry_run', $hash, null, null, 'DR-x', 'x');
+        $this->engine()->store->claimRequest($id);
+        $this->engine()->store->finishRequest($id, ['status' => 'completed', 'reasons' => ["bad\xff"], 'rows' => [['business_key' => 'K', 'status' => 'done', 'reads' => ['a' => "=\xff"]]]]);
+        $this->assertSame('done', $this->engine()->store->getRequest($id)['status']);
+    }
+
+    private function createPlanForStore(): string
+    {
+        $plan = \Src\Plan\StrictJson::decode(file_get_contents(base_path('stubs/order_plan.json')));
+
+        return $this->engine()->store->savePlan($plan, \Src\Policy\StubRegistrations::hashInputs(), 's', 'x', 'y');
+    }
+
+    public function test_差分の比べる相手は_同じplan_idを優先し_違えば、その旨を出す(): void
+    {
+        $this->login();
+        $h1 = $this->createPlan(); // plan_id = PLN-0002
+        // 別の plan_id の計画を、保存する
+        $other = \Src\Plan\StrictJson::decode(file_get_contents(base_path('stubs/order_plan.json')));
+        $other->plan_id = 'PLN-0099';
+        $hOther = $this->engine()->store->savePlan($other, \Src\Policy\StubRegistrations::hashInputs(), 's', 'x', 'y');
+        $this->engine()->ledger->append('approval', $hOther, (object) ['stage' => 'final', 'approver' => 'a', 'os_user' => 'b', 'dry_run_id' => 'DR-z']);
+        $h2 = $this->createPlan('発注管理システムにログインする。'); // plan_id = PLN-0002（新しい）
+        // h2 の比べる相手：同じ plan_id の h1（最終承認がなくても、別の plan_id の承認済みの hOther より、優先する）
+        $html = $this->get($this->base."/plans/{$h2}/diff")->assertOk()->getContent();
+        $this->assertStringContainsString('比べる計画：<code>'.$h1.'</code>', $html);
+        $this->assertStringNotContainsString('別の計画（plan_id が違う）', $html);
+        // 明示的に、別の plan_id の計画と比べると、その旨を出す
+        $this->get($this->base."/plans/{$h2}/diff?against={$hOther}")->assertOk()->assertSee('別の計画（plan_id が違う）');
     }
 }

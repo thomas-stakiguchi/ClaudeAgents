@@ -21,8 +21,11 @@
 </div>
 
 @if ($old !== null)
-  @if (count($changes) === 0)
-    <p class="ok">差分は、ありません（中身が同じです）。</p>
+  @if (! $sameId) <p class="warn">比べている計画は、<strong>別の計画（plan_id が違う）</strong>です。同じ計画の、前の版ではありません。</p> @endif
+  @if (count($changes) === 0 && $old['hash'] === $p['hash'])
+    <p class="ok">同じ計画です（差分は、ありません）。</p>
+  @elseif (count($changes) === 0)
+    <p class="warn">表示できる差分は、ありません。ただし、<strong>計画ハッシュは違います</strong>（表示の対象外の項目が、違う可能性があります）。承認する前に、計画ハッシュと、許可リストの版を、確かめてください。</p>
   @else
     <p>変更：{{ count($changes) }} 件（うち<strong>重要</strong>：{{ count(array_filter($changes, fn ($c) => $c['important'])) }} 件）。
        <small>「重要」は、操作の種類・対象・接続先・確認条件・読み返し・入力データの列・許可リストなどの変更です。承認済みの版から、重要な変更があるときは、新しい版として、再承認とドライランのやり直しが要ります。</small></p>

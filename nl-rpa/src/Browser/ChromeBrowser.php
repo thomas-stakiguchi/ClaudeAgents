@@ -456,6 +456,31 @@ final class ChromeBrowser implements BrowserPort
         return $out;
     }
 
+    /** @return list<int> 子孫のプロセスID（Linuxの /proc のみ） */
+    private static function descendants(int $root): array
+    {
+        $children = [];
+        foreach (glob('/proc/[0-9]*/stat') ?: [] as $f) {
+            $stat = @file_get_contents($f);
+            if (is_string($stat) && ($c = strrpos($stat, ')')) !== false) {
+                $rest = explode(' ', trim(substr($stat, $c + 1)));
+                isset($rest[1]) && $children[(int) $rest[1]][] = (int) basename(dirname($f));
+            }
+        }
+        $out = [];
+        $stack = [$root];
+        while ($stack) {
+            foreach ($children[array_pop($stack)] ?? [] as $c) {
+                if (! in_array($c, $out, true)) {
+                    $out[] = $c;
+                    $stack[] = $c;
+                }
+            }
+        }
+
+        return $out;
+    }
+
     private static function waitChromeExit(string $dir, float $sec): void
     {
         $end = microtime(true) + $sec;
@@ -463,7 +488,16 @@ final class ChromeBrowser implements BrowserPort
             usleep(50000);
         }
         if (function_exists('posix_kill')) {
-            foreach (self::chromePids($dir) as $pid) {
+            // 引数が一致するプロセスと、その子孫（--user-data-dir を持たない、クラッシュ報告のプロセスなど）を、止めて、終了させる
+            $targets = self::chromePids($dir);
+            foreach ($targets as $pid) {
+                $targets = array_merge($targets, self::descendants($pid));
+            }
+            $targets = array_values(array_unique($targets));
+            foreach ($targets as $pid) {
+                @posix_kill($pid, SIGSTOP);
+            }
+            foreach ($targets as $pid) {
                 @posix_kill($pid, SIGKILL);
             }
             $end = microtime(true) + 1.0;

@@ -9,7 +9,8 @@ use Src\Plan\CanonicalJson;
 /**
  * 計画の差分（R3、14：修正案の扱い）。2つの計画（と、計画ハッシュの入力）を、項目ごとに比べて、
  * 追加・削除・変更の一覧にする。承認済みの版と比べて、何が変わったかを、承認する人が見られるようにする。
- * 「重要」は、取り消せない操作・確認条件・対象・接続先・許可リスト・入力データの列の変更（R14の、受け付けない修正案の候補）。
+ * 「重要」は、手順の追加・削除・並べ替え、操作の種類・対象・接続先・確認条件・読み返し、入力データの列、上限、許可リスト・個別登録・画面の記録、それらの版、未確定の変更（R14の、受け付けない修正案の候補）。
+ * 根拠の文・ラベルなどの変更は、重要ではない。
  */
 final class PlanDiff
 {
@@ -33,11 +34,12 @@ final class PlanDiff
                 continue;
             }
             $meta = $b[$path] ?? $a[$path];
+            [$shownOld, $shownNew] = self::excerpts($inA ? $a[$path]['v'] : '', $inB ? $b[$path]['v'] : '');
             $out[] = [
                 'kind' => ! $inA ? '追加' : (! $inB ? '削除' : '変更'),
                 'where' => $meta['where'],
-                'old' => $inA ? self::short($a[$path]['v']) : '',
-                'new' => $inB ? self::short($b[$path]['v']) : '',
+                'old' => $shownOld,
+                'new' => $shownNew,
                 'important' => $meta['important'] || ! $inA && $meta['stepAdded'] || ! $inB && $meta['stepAdded'],
             ];
         }
@@ -45,9 +47,27 @@ final class PlanDiff
         return $out;
     }
 
-    private static function short(string $v): string
+    /**
+     * 表示用に、長い値を短くする。前と後が、長く、最初の違いが、先頭から離れている場合は、最初に違う位置の前後を出す
+     * （先頭だけを切ると、前と後が、同じに見えて、どこが変わったか読めない）。
+     *
+     * @return array{0:string,1:string}
+     */
+    private static function excerpts(string $old, string $new): array
     {
-        return mb_strlen($v) > 200 ? mb_substr($v, 0, 200).'…' : $v;
+        $max = 200;
+        if (mb_strlen($old) <= $max && mb_strlen($new) <= $max) {
+            return [$old, $new];
+        }
+        $n = min(mb_strlen($old), mb_strlen($new));
+        $i = 0;
+        while ($i < $n && mb_substr($old, $i, 1) === mb_substr($new, $i, 1)) {
+            $i++;
+        }
+        $start = max(0, $i - 60);
+        $cut = static fn (string $v): string => ($start > 0 ? '…' : '').mb_substr($v, $start, $max).(mb_strlen($v) > $start + $max ? '…' : '');
+
+        return [$cut($old), $cut($new)];
     }
 
     /** @return array<string,array{v:string, where:string, important:bool, stepAdded:bool}> */
@@ -58,13 +78,17 @@ final class PlanDiff
             $out[$path] = ['v' => CanonicalJson::encode($v), 'where' => $where, 'important' => $important, 'stepAdded' => $stepAdded];
         };
         foreach (['plan_id', 'version', 'scenario_id', 'created_by_ai', 'allowlist_versions', 'screen_record_version', 'unresolved'] as $k) {
-            $put("top/{$k}", "計画 / {$k}", $plan->{$k} ?? null, $k === 'unresolved');
+            // 許可リスト・画面の記録の版と、未確定の変更は、重要（承認の根拠が変わる）
+            $put("top/{$k}", "計画 / {$k}", $plan->{$k} ?? null, in_array($k, ['unresolved', 'allowlist_versions', 'screen_record_version'], true));
         }
+        // 最上位の手順の並び（並べ替えも、差分として出す）
+        $put('top/order', '計画 / 最上位の手順の並び', array_map(static fn ($s) => (string) ($s->id ?? '?'), $plan->steps ?? []), true);
         foreach ($plan->input->columns ?? [] as $c) {
             $put('col/'.$c->name, '入力データの列「'.$c->name.'」', $c, true);
         }
         foreach ($plan->limits ?? new \stdClass() as $k => $v) {
-            $put("limit/{$k}", "上限 / {$k}", $v, false);
+            // 上限（R9、SEC-14）は、実行前の安全装置。変更は、すべて重要（上げる・消す、だけでなく、下げる場合も、見落とさない）
+            $put("limit/{$k}", "上限 / {$k}", $v, true);
         }
         self::steps($plan->steps ?? [], $put, null);
         foreach ($inputs as $k => $v) {

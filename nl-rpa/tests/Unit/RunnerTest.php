@@ -627,7 +627,7 @@ class RunnerTest extends TestCase
         $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
         $ifs = array_values(array_filter($dry->rows[0]['steps'], fn ($s) => $s['action'] === 'if'));
         $this->assertCount(1, $ifs);
-        $this->assertFalse($ifs[0]['ok']);
+        $this->assertTrue($ifs[0]['ok'], '条件が偽で else に進むのは、正常な分岐（不合格ではない）');
         $this->assertSame('else', $ifs[0]['note']);
         $ifs2 = array_values(array_filter($dry->rows[1]['steps'], fn ($s) => $s['action'] === 'if'));
         $this->assertSame('then', $ifs2[0]['note']);
@@ -649,5 +649,38 @@ class RunnerTest extends TestCase
         // 行ごとの結果が、別の配列であること（同じ参照を、共有していない）
         $r->rows[1]['steps'][0]['id'] = 'CHANGED';
         $this->assertSame('S-007', $r->rows[2]['steps'][0]['id']);
+    }
+
+    public function test_確認条件の判定の前に止まった手順も_不合格として残る(): void
+    {
+        $this->prepareRun();
+        // 本番の途中（入力のあと）で、停止の旗が立つ → 確認条件の判定の前に止まる
+        $flags = $this->flags;
+        $n = 0;
+        $this->browser->typedValueTransform = function (string $v) use ($flags, &$n): string {
+            ++$n === 2 && $flags->set(Flags::STOP, true, 'op'); // 2つ目の入力のあと
+            return $v;
+        };
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $steps = $r->rows[0]['steps'];
+        $last = end($steps);
+        $this->assertFalse($last['ok']);
+        $this->assertStringStartsWith('停止:', $last['note']);
+        $this->assertStringContainsString('停止の旗', $last['note']);
+    }
+
+    public function test_要素がなくて例外になった手順も_不合格として残る(): void
+    {
+        // 常に取り消せる read_text で、画面にない要素を読む（例外になる）。計画を変えてから、承認する（承認は、計画ハッシュに結び付く）
+        array_splice($this->plan->steps[1]->steps, 3, 0, [StrictJson::decode('{"id":"S-030","action":"read_text","destination":{"kind":"browser","name":"stub"},"target":"no_such_element","verify":{"type":"element_exists","value":"item_code"},"source":null}')]);
+        $this->approve('plan');
+        $dry = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-1');
+        $this->assertSame(RunReport::HALTED, $dry->status);
+        $steps = $dry->rows[0]['steps'];
+        $last = end($steps);
+        $this->assertSame('S-030', $last['id']);
+        $this->assertFalse($last['ok']);
+        $this->assertStringContainsString('例外', $last['note']);
     }
 }

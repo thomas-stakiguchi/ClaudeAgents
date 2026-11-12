@@ -87,7 +87,7 @@ class PlanDiffTest extends TestCase
         $in2['registrations'] = (object) ['buttons' => [(object) ['destination' => 'stub', 'target' => 'submit_button']]];
         $c = PlanDiff::compare($this->plan(), $in, $new, $in2);
         $this->assertTrue($this->find($c, '入力データの列「数量」')['important']);
-        $this->assertFalse($this->find($c, '上限 / max_rows_per_run')['important']);
+        $this->assertTrue($this->find($c, '上限 / max_rows_per_run')['important'], '上限の変更は、重要');
         $this->assertTrue($this->find($c, '許可リスト・個別登録・画面の記録 / registrations')['important']);
     }
 
@@ -98,5 +98,47 @@ class PlanDiffTest extends TestCase
         $new->steps[0]->label = str_repeat('あ', 500);
         $x = $this->find(PlanDiff::compare($this->plan(), $in, $new, $in), '手順 S-001 / label');
         $this->assertLessThanOrEqual(201, mb_strlen($x['new']));
+    }
+
+    public function test_最上位の手順の並べ替えも差分に出る(): void
+    {
+        $in = StubRegistrations::hashInputs();
+        $new = $this->plan();
+        $new->steps = array_reverse($new->steps);
+        $c = PlanDiff::compare($this->plan(), $in, $new, $in);
+        $x = $this->find($c, '計画 / 最上位の手順の並び');
+        $this->assertNotNull($x);
+        $this->assertTrue($x['important']);
+    }
+
+    public function test_上限の削除や引き上げ_と_許可リストの版の変更は重要(): void
+    {
+        $in = StubRegistrations::hashInputs();
+        $new = $this->plan();
+        unset($new->limits->max_quantity_per_run);
+        $new->limits->max_rows_per_run = 1000;
+        $new->allowlist_versions->operations = 9;
+        $new->screen_record_version = 9;
+        $c = PlanDiff::compare($this->plan(), $in, $new, $in);
+        foreach (['上限 / max_quantity_per_run', '上限 / max_rows_per_run', '計画 / allowlist_versions', '計画 / screen_record_version'] as $w) {
+            $this->assertTrue($this->find($c, $w)['important'] ?? false, $w);
+        }
+        $this->assertSame('削除', $this->find($c, '上限 / max_quantity_per_run')['kind']);
+    }
+
+    public function test_長い値の後ろのほうだけが変わっても_違いが読める(): void
+    {
+        $in = StubRegistrations::hashInputs();
+        $a = $in;
+        $b = $in;
+        $long = str_repeat('x', 400);
+        $a['screen_record'] = (object) ['selectors' => (object) ['a' => $long.'#submit_button']];
+        $b['screen_record'] = (object) ['selectors' => (object) ['a' => $long.'#evil']];
+        $c = PlanDiff::compare($this->plan(), $a, $this->plan(), $b);
+        $x = $this->find($c, '許可リスト・個別登録・画面の記録 / screen_record');
+        $this->assertNotSame($x['old'], $x['new'], '前と後が、同じに見える');
+        $this->assertStringContainsString('submit_button', $x['old']);
+        $this->assertStringContainsString('evil', $x['new']);
+        $this->assertLessThanOrEqual(402, mb_strlen($x['old']));
     }
 }

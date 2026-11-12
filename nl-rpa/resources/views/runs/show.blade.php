@@ -56,9 +56,10 @@
 <div class="card">
   <p><a href="/runs/{{ $run['run_id'] }}/result.csv">結果をCSVでダウンロード</a> <small>（業務キー、手順ごとの状態、画面から読んだ値）</small></p>
   @if (count($latest) === 0) <p>まだ、結果がありません。</p> @else
+  <p><small>状態は、状態の表（上の「行ごとの状態」と同じ）から出しています。読んだ値は、その行を、最後に実行したときのものです（飛ばした行は、前の実行の値を残しています）。読んだ値は、マスクされず、そのまま出ます。</small></p>
   <table><tr><th>業務キー</th><th>状態</th>@foreach ($readKeys as $k)<th>読んだ値：{{ $k }}</th>@endforeach</tr>
   @foreach ($latest as $key => $row)
-  <tr><td>{{ $key }}</td><td>{{ $row['status'] }}</td>@foreach ($readKeys as $k)<td>{{ $row['reads'][$k] ?? '' }}</td>@endforeach</tr>
+  <tr><td>{{ $key }}</td><td>{{ $rowStates[$key] ?? '' }}</td>@foreach ($readKeys as $k)<td>{{ $row['reads'][$k] ?? '' }}</td>@endforeach</tr>
   @endforeach</table>
   @endif
 </div>
@@ -77,13 +78,6 @@
 @endif
 
 @if (count($requests) > 0)
-<h2>実行の結果</h2>
-@php($lastRows = null)
-@foreach ($requests as $q)@if ($lastRows === null && isset($q['result']['rows']) && count($q['result']['rows']) > 0)@php($lastRows = $q['result']['rows'])@endif @endforeach
-@if ($lastRows !== null)
-<table><tr><th>業務キー</th><th>状態</th><th>画面から読んだ値（発注番号など）</th></tr>
-@foreach ($lastRows as $row)<tr><td>{{ $row['business_key'] }}</td><td>{{ $row['status'] }}</td><td>@foreach ($row['reads'] as $k => $v) {{ $k }}：{{ $v }} @endforeach</td></tr>@endforeach</table>
-@endif
 <h2>実行の記録</h2>
 <table><tr><th>要求</th><th>状態</th><th>結果</th><th>理由</th></tr>
 @foreach ($requests as $q)

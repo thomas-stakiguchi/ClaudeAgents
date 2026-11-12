@@ -296,6 +296,7 @@ final class PlanRunner
                 $stop = false;
                 foreach ($top->steps as $s) {
                     if (($why = $this->step($s, $ctx, $values, $key, $report, $reads, $stop)) !== null) {
+                        $this->logHalt($ctx, $s, $why);
                         $rowReport['status'] = 'halted';
                         $rowReport['reads'] = $reads;
                         $rowReport['steps'] = $ctx->log;
@@ -419,7 +420,7 @@ final class PlanRunner
                 case 'if':
                     $verifier = new Verifier($this->browser);
                     $cond = $verifier->check($s->condition, $s, $values);
-                    $ctx->log[] = ['id' => (string) $s->id, 'action' => 'if', 'verify' => $this->verifyLabel($s->condition), 'ok' => $cond, 'note' => $cond ? 'then' : (isset($s->else) ? 'else' : '分岐なし（停止）')];
+                    $ctx->log[] = ['id' => (string) $s->id, 'action' => 'if', 'verify' => $this->verifyLabel($s->condition), 'ok' => $cond || isset($s->else), 'note' => $cond ? 'then' : (isset($s->else) ? 'else' : '分岐なし（停止）')]; // 条件が偽で else に進むのは、正常な分岐（不合格ではない）
                     $branch = $cond ? $s->then : ($s->else ?? null);
                     if ($branch === null) {
                         return "条件に合わず、else がないため停止: {$s->id}"; // 書かれていない分岐は、すべて停止
@@ -477,6 +478,19 @@ final class PlanRunner
         }
 
         return null;
+    }
+
+    /**
+     * 止まった手順を、手順ごとの結果に、不合格として残す（例外、停止の旗、ダイアログ、未対応など、確認条件の判定の前に止まった場合も）。
+     * すでに、その手順の結果が、最後に記録されていれば、重ねない。
+     */
+    private function logHalt(\stdClass $ctx, \stdClass $s, string $why): void
+    {
+        $last = $ctx->log === [] ? null : $ctx->log[count($ctx->log) - 1];
+        if ($last !== null && $last['id'] === (string) ($s->id ?? '') && ! $last['ok']) {
+            return;
+        }
+        $ctx->log[] = ['id' => (string) ($s->id ?? '?'), 'action' => (string) ($s->action ?? '?'), 'verify' => '', 'ok' => false, 'note' => '停止: '.$why];
     }
 
     /** 確認条件を、画面に出す短い文にする（例：text_visible：発注入力） */

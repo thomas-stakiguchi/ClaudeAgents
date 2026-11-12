@@ -166,7 +166,7 @@ final class AppStore
     public function finishRequest(int $id, array $result): void
     {
         $st = $this->db->pdo->prepare("UPDATE requests SET status = 'done', result_json = ?, finished_at = ? WHERE id = ?");
-        $st->execute([json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), ($this->clock)(), $id]);
+        $st->execute([json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE), ($this->clock)(), $id]);
     }
 
     /** 異常終了で「実行中」のまま残った要求を、「完了（異常終了）」にする。件数を返す */
