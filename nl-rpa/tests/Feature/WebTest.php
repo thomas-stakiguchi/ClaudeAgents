@@ -574,7 +574,7 @@ class WebTest extends TestCase
     public function test_緊急停止は記録したワーカーと子孫を終了する_コマンドラインの書き方に依らない(): void
     {
         if (! is_dir('/proc')) {
-            $this->markTestSkipped('Linux専用');
+            $this->skipOrFail('Linux専用');
         }
         $this->engine();
         // ワーカー（孫まで作る）。コマンドラインは、「artisan nlrpa:worker」と全然違う書き方でもよい
@@ -604,7 +604,7 @@ class WebTest extends TestCase
     public function test_緊急停止は開始時刻が違うプロセス_PIDの再利用_を終了しない(): void
     {
         if (! is_dir('/proc')) {
-            $this->markTestSkipped('Linux専用');
+            $this->skipOrFail('Linux専用');
         }
         $this->engine();
         [$other, $opid] = $this->spawn([PHP_BINARY, '-r', 'sleep(60);']);
@@ -702,7 +702,7 @@ class WebTest extends TestCase
     {
         $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
         if ($chrome === null || ! is_dir('/proc')) {
-            $this->markTestSkipped('ChromeまたはLinuxがありません');
+            $this->skipOrFail('ChromeまたはLinuxがありません');
         }
         $this->engine();
         $child = proc_open([PHP_BINARY, __DIR__.'/../Support/chrome_orphan.php', $this->dir, $chrome], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
@@ -758,7 +758,7 @@ class WebTest extends TestCase
     {
         $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
         if ($chrome === null || ! is_dir('/proc')) {
-            $this->markTestSkipped('ChromeまたはLinuxがありません');
+            $this->skipOrFail('ChromeまたはLinuxがありません');
         }
         $this->engine();
         $child = proc_open([PHP_BINARY, __DIR__.'/../Support/chrome_orphan.php', $this->dir, $chrome], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
@@ -794,7 +794,7 @@ class WebTest extends TestCase
     {
         $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
         if ($chrome === null || ! is_file($chrome)) {
-            $this->markTestSkipped('Chromeが見つかりません');
+            $this->skipOrFail('Chromeが見つかりません');
         }
         $s = stream_socket_server('tcp://127.0.0.1:0');
         $port = (int) explode(':', stream_socket_get_name($s, false))[1];
@@ -1051,7 +1051,7 @@ class WebTest extends TestCase
     public function test_ワーカーが終了の合図を受けたら_Chromeを閉じ_プロファイルを破棄し_ロックを解放する(): void
     {
         if (! is_dir('/proc')) {
-            $this->markTestSkipped('Linux専用');
+            $this->skipOrFail('Linux専用');
         }
         [$proc, $pid, $dir] = $this->startSlowWorker();
         try {
@@ -1083,7 +1083,7 @@ class WebTest extends TestCase
     public function test_ワーカーがSIGKILLで死んで_孤児のChromeが残っても_recoverは動き_回収する(): void
     {
         if (! is_dir('/proc')) {
-            $this->markTestSkipped('Linux専用');
+            $this->skipOrFail('Linux専用');
         }
         [$proc, $pid, $dir, $req] = $this->startSlowWorker();
         try {
@@ -1112,7 +1112,7 @@ class WebTest extends TestCase
     {
         $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
         if ($chrome === null || ! is_dir('/proc')) {
-            $this->markTestSkipped('ChromeまたはLinuxがありません');
+            $this->skipOrFail('ChromeまたはLinuxがありません');
         }
         $this->engine();
         $child = proc_open([PHP_BINARY, __DIR__.'/../Support/chrome_orphan.php', $this->dir, $chrome], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);

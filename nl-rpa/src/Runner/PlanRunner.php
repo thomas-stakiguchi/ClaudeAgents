@@ -28,6 +28,9 @@ use Src\State\StepStateStore;
  */
 final class PlanRunner
 {
+    /** 取り消せる手順として、実際に実行できる操作（click は、取り消せない手順としてだけ実行できる） */
+    private const REVERSIBLE_ACTIONS = ['open_url', 'read_text', 'type_text', 'clear_text', 'wait_for', 'write_result'];
+
     private readonly \Src\Guard\FirstRowGate $gate;
 
     public function __construct(
@@ -98,6 +101,10 @@ final class PlanRunner
             return $this->refuse('別の実行が動いています（二重起動の防止）');
         }
         try {
+            // 記録のチェーンが壊れていないことを、始める前に確かめる（SEC-2）。壊れていれば、何も実行しない
+            if (($broken = $this->ledger->verify()) !== null) {
+                return $this->refuse('記録（台帳）の改ざん・破損を検知しました。実行しません: '.$broken);
+            }
             $ctx = $this->prepare($plan, $hashInputs, 'dry');
             if (is_string($ctx)) {
                 return $this->refuse($ctx);
@@ -135,6 +142,10 @@ final class PlanRunner
             return $this->refuse('別の実行が動いています（二重起動の防止）');
         }
         try {
+            // 記録のチェーンが壊れていないことを、始める前に確かめる（SEC-2）。壊れていれば、何も実行しない
+            if (($broken = $this->ledger->verify()) !== null) {
+                return $this->refuse('記録（台帳）の改ざん・破損を検知しました。実行しません: '.$broken);
+            }
             $ctx = $this->prepare($plan, $hashInputs, 'real');
             if (is_string($ctx)) {
                 return $this->refuse($ctx);
@@ -172,6 +183,12 @@ final class PlanRunner
             }
             // ロックを取ったあとに、異常終了で残った「処理中」を「要確認」にする（14-3の5）
             $this->states->recoverAfterCrash();
+            // 未解消の「処理中」「要確認」が1件でも残っている間は、本番を始めない（10-3）。
+            // 「同じシナリオ系列」の定義が未決（d2）のため、当面は系列を分けず、全体で数える（安全側）
+            $un = $this->states->unresolvedAll();
+            if ($un !== []) {
+                return $this->refuse('未解消の「処理中」「要確認」が残っています（'.count($un).'件。例：業務キー '.$un[0]['business_key'].' / 手順 '.$un[0]['step_id'].'）。先に、画面で解消してください（10-3）');
+            }
 
             return $this->execute($ctx, $rows, $run);
         } finally {
@@ -218,6 +235,20 @@ final class PlanRunner
         $okDialog = $this->firstStepWhere($copy->steps, static fn (\stdClass $s): bool => ($s->action ?? null) === 'on_dialog' && ($s->response ?? null) !== 'stop');
         if ($okDialog !== null) {
             return "1aでは、OKする確認ダイアログ（on_dialog）は未対応です: {$okDialog}";
+        }
+        // 部品が実行できない操作（press_key、login、confirm_dialog、取り消せない扱いでない click など）は、ドライランも本番も始めない。
+        // 実行されない手順について、人に「実行済み／未実行」を判定させないため（9-2、10-1）
+        $irreversibleIds = $policy->irreversibleStepIds($copy);
+        $unsupported = $this->firstStepWhere($copy->steps, static function (\stdClass $s) use ($irreversibleIds): bool {
+            $a = $s->action ?? null;
+            if (in_array($a, PlanValidator::SYNTAX, true) || in_array($a, self::REVERSIBLE_ACTIONS, true)) {
+                return false;
+            }
+
+            return ! ($a === 'click' && in_array($s->id ?? null, $irreversibleIds, true));
+        });
+        if ($unsupported !== null) {
+            return "1aでは実行できない操作が含まれています: {$unsupported}";
         }
         $outside = [];
         foreach ($copy->steps as $top) {

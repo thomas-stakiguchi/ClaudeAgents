@@ -71,6 +71,14 @@ final class StepStateStore
         return array_map(static fn (array $r): string => (string) $r['step_id'], $st->fetchAll());
     }
 
+    /** 未解消（処理中・要確認）の全件。10-3：これが残る間は、本番を始めない @return list<array{business_key:string,step_id:string,state:string}> */
+    public function unresolvedAll(): array
+    {
+        $rows = $this->db->pdo->query("SELECT business_key, step_id, state FROM step_states WHERE state IN ('processing','needs_review') ORDER BY business_key, step_id")->fetchAll();
+
+        return array_map(static fn (array $r): array => ['business_key' => (string) $r['business_key'], 'step_id' => (string) $r['step_id'], 'state' => (string) $r['state']], $rows);
+    }
+
     /**
      * 取り消せない操作の直前に書く。保存に失敗したら、例外（＝取り消せない操作は実行しない。10-1）。
      * 「成功済みでない」「同じ業務キーに未解消がない」の確認は、この書き込みと同じトランザクションの中で行う

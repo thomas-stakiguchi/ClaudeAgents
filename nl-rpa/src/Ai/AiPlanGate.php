@@ -23,6 +23,8 @@ final class AiPlanGate
     /**
      * @param array<string,array{type:string,role?:string|null,required?:bool}>|null $expectedColumns 列名 => 定義
      * @param list<string>|null $elementNames
+     * @param array{model:string,prompt_version:string,operations:int,destinations:int,screen_record_version:int}|null $engineFacts
+     *        渡すと、AIの自己申告（モデル名、プロンプトの版、許可リストと画面の記録の版）を、これで上書きする（監査の記録を、事実に合わせる）
      * @return array{plan: \stdClass|null, errors: list<string>}
      */
     public static function accept(
@@ -31,6 +33,7 @@ final class AiPlanGate
         ?array $expectedColumns = null,
         ?array $elementNames = null,
         ?int $orgMaxRows = null,
+        ?array $engineFacts = null,
     ): array {
         try {
             $plan = StrictJson::decode($aiOutput, 64, self::MAX_BYTES);
@@ -41,6 +44,11 @@ final class AiPlanGate
             /** @var \stdClass $plan */
             unset($plan->plan_hash);
             self::strip($plan->steps);
+            if ($engineFacts !== null) {
+                $plan->created_by_ai = (object) ['model' => $engineFacts['model'], 'prompt_version' => $engineFacts['prompt_version']];
+                $plan->allowlist_versions = (object) ['operations' => $engineFacts['operations'], 'destinations' => $engineFacts['destinations']];
+                $plan->screen_record_version = $engineFacts['screen_record_version'];
+            }
             if ($scenario !== null) {
                 self::checkSources($plan->steps, $scenario);
             }
@@ -72,14 +80,38 @@ final class AiPlanGate
     /** @param array<mixed> $steps */
     private static function checkSources(array $steps, string $scenario): void
     {
+        // シナリオを、句点・改行で文に分け、source が、いずれかの文と（前後の空白を除いて）完全に一致するときだけ認める。
+        // 部分一致だと、「。」1文字でも「根拠あり」になり、「AIが補った」の印を回避できる（R2、SEC-7）
+        $sentences = self::sentences($scenario);
         foreach ($steps as $s) {
-            if (is_string($s->source ?? null) && ! str_contains($scenario, $s->source)) {
-                $s->source = null; // シナリオにない文は、根拠として認めない
+            if (is_string($s->source ?? null) && ! in_array(trim($s->source), $sentences, true)) {
+                $s->source = null; // シナリオの文と一致しないものは、根拠として認めない
             }
             foreach (['steps', 'then', 'else'] as $k) {
                 isset($s->{$k}) && self::checkSources($s->{$k}, $scenario);
             }
         }
+    }
+
+    /** @return list<string> シナリオの文と節（句点「。」「！」「？」と改行で文に、読点で節に区切る。空は除く） */
+    private static function sentences(string $scenario): array
+    {
+        $parts = preg_split('/(?<=[。！？!?])|[\r\n]+/u', $scenario) ?: [];
+        $out = [];
+        foreach ($parts as $p) {
+            $t = trim($p);
+            if ($t === '') {
+                continue;
+            }
+            $out[] = $t;
+            // 読点で区切った節も、1つの根拠として認める（例：「発注画面を開き」）。完全一致のみ。部分一致は認めない
+            foreach (preg_split('/[、,]/u', $t) ?: [] as $c) {
+                $c = trim($c);
+                $c !== '' && $out[] = $c;
+            }
+        }
+
+        return $out;
     }
 
     /**

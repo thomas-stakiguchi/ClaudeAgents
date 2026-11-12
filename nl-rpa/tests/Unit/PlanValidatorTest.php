@@ -303,6 +303,35 @@ class PlanValidatorTest extends TestCase
         $this->assertNull($steps[1]->steps[2]->source, '登録ボタンの文はシナリオにないので補った扱い');
     }
 
+    public function test_根拠は文の完全一致だけ認める_句点だけや断片は補った扱い(): void
+    {
+        $scenario = '発注管理システムにログインする。商品コード・数量・納品日を入力する。';
+        foreach (['。', '発注管理', 'ログインする', '商品コード・数量・納品日を入力する'] as $bad) {
+            $p = $this->base();
+            $p->steps[0]->source = $bad;
+            $r = AiPlanGate::accept(json_encode($p, JSON_UNESCAPED_UNICODE), scenario: $scenario);
+            $this->assertSame([], $r['errors']);
+            $this->assertNull($r['plan']->steps[0]->source, "「{$bad}」は、根拠として認めない");
+        }
+        $p = $this->base();
+        $p->steps[0]->source = ' 発注管理システムにログインする。 ';
+        $r = AiPlanGate::accept(json_encode($p, JSON_UNESCAPED_UNICODE), scenario: $scenario);
+        $this->assertNotNull($r['plan']->steps[0]->source, '前後の空白は無視する');
+    }
+
+    public function test_監査の記録は_AIの自己申告ではなく実行エンジンの値で上書きする(): void
+    {
+        $p = $this->base();
+        $p->created_by_ai = (object) ['model' => 'ウソのモデル', 'prompt_version' => 'ウソ'];
+        $p->screen_record_version = 99;
+        $r = AiPlanGate::accept(json_encode($p, JSON_UNESCAPED_UNICODE), engineFacts: ['model' => 'stub', 'prompt_version' => 'stub-1', 'operations' => 3, 'destinations' => 4, 'screen_record_version' => 2]);
+        $this->assertSame([], $r['errors']);
+        $this->assertSame('stub', $r['plan']->created_by_ai->model);
+        $this->assertSame(2, $r['plan']->screen_record_version);
+        $this->assertSame(3, $r['plan']->allowlist_versions->operations);
+        $this->assertSame(4, $r['plan']->allowlist_versions->destinations);
+    }
+
     public function test_ゲートは人の列定義と違えば拒否(): void
     {
         $cols = [

@@ -16,6 +16,11 @@ final class StubAiClient implements AiClient
         return $this->fixedJson ?? self::defaultPlanJson();
     }
 
+    public function identity(): array
+    {
+        return ['model' => 'stub', 'prompt_version' => 'stub-1'];
+    }
+
     public static function defaultPlanJson(): string
     {
         return <<<'JSON'

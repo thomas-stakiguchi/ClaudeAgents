@@ -31,7 +31,7 @@ class ChromeBrowserTest extends TestCase
     {
         $this->chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
         if ($this->chrome === null || ! is_file($this->chrome)) {
-            $this->markTestSkipped('Chromeが見つかりません（NL_RPA_CHROME で指定できます）');
+            $this->skipOrFail('Chromeが見つかりません（NL_RPA_CHROME で指定できます）');
         }
         $this->tmp = sys_get_temp_dir().'/nlrpa_chrome_'.bin2hex(random_bytes(4));
         mkdir($this->tmp, 0700, true);

@@ -209,7 +209,8 @@ class RunnerTest extends TestCase
 
         $this->browser->failAfterClick = false;
         $r2 = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
-        $this->assertSame(RunReport::HALTED, $r2->status);
+        $this->assertSame(RunReport::REFUSED_TO_START, $r2->status, '10-3：未解消が残る間は、起動しない');
+        $this->assertStringContainsString('未解消', implode(' ', $r2->reasons));
         $this->assertCount(1, $this->browser->orders(), '要確認のままの行を、再実行してはいけない');
         // 要確認のままでは、初回の確認もできない
         try {
@@ -474,8 +475,57 @@ class RunnerTest extends TestCase
         $this->states->markProcessing('K-001', 'S-005', PlanHasher::hash($this->plan, $this->inputs), 'RUN-0');
         $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
         $this->assertSame('needs_review', $this->states->get('K-001', 'S-005'));
-        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertSame(RunReport::REFUSED_TO_START, $r->status, '10-3：未解消が残る間は、起動しない');
         $this->assertSame([], $this->browser->orders());
+    }
+
+    public function test_10_3_別の行に要確認が残っていれば_本番を始めない_登録もできない(): void
+    {
+        $this->prepareRun();
+        $this->states->markProcessing('K-002', 'S-005', 'sha256:x', 'RUN-OLD');
+        $this->states->markNeedsReview('K-002', 'S-005');
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::REFUSED_TO_START, $r->status);
+        $this->assertSame([], $this->browser->orders(), 'K-001 も、実行されない');
+        $this->assertNull($this->states->get('K-001', 'S-005'));
+        // 登録の時点でも、断る（登録サービスに、状態の表を渡した場合）
+        $reg = new RunRegistrar($this->ledger, $this->approvals, null, $this->states);
+        $this->assertNotSame([], $reg->register('RUN-9', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
+        // 解消すれば、始められる
+        $this->states->resolve('K-002', 'S-005', false, '佐藤');
+        $this->assertSame(RunReport::AWAITING_FIRST_ROW, $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows)->status);
+    }
+
+    public function test_実行できない操作を含む計画は_ドライランも本番も始めない(): void
+    {
+        $dest = '"destination":{"kind":"browser","name":"stub"}';
+        $v = '"verify":{"type":"text_visible","value":"x"}';
+        $steps = [
+            'press_key' => '{"id":"S-050","action":"press_key",'.$dest.',"source":null,'.$v.'}',
+            'login' => '{"id":"S-050","action":"login",'.$dest.',"target":"item_code","source":null,'.$v.'}',
+            'confirm_dialog' => '{"id":"S-050","action":"confirm_dialog",'.$dest.',"source":null,'.$v.'}',
+        ];
+        foreach ($steps as $action => $json) {
+            $plan = StrictJson::decode(file_get_contents(dirname(__DIR__, 2).'/stubs/order_plan.json'));
+            $plan->steps[1]->steps[] = StrictJson::decode($json);
+            $this->ledger->append('approval', PlanHasher::hash($plan, $this->inputs), (object) ['stage' => 'plan', 'approver' => '佐藤', 'os_user' => 'tester']);
+            $dry = $this->runner->dryRun($plan, $this->inputs, $this->rows, 'DR-X-'.$action);
+            $this->assertSame(RunReport::REFUSED_TO_START, $dry->status, $action.': '.implode(' / ', $dry->reasons));
+            $this->assertStringContainsString('S-050', implode(' ', $dry->reasons));
+        }
+    }
+
+    public function test_本番の前に台帳のチェーンを検証し_壊れていれば何も実行しない(): void
+    {
+        $this->prepareRun();
+        $this->db->pdo->exec('DROP TRIGGER ledger_no_update');
+        $this->db->pdo->exec("UPDATE ledger SET payload = payload || ' ' WHERE seq = 1");
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::REFUSED_TO_START, $r->status);
+        $this->assertStringContainsString('台帳', implode(' ', $r->reasons));
+        $this->assertSame([], $this->browser->orders());
+        $d = $this->runner->dryRun($this->plan, $this->inputs, $this->rows, 'DR-2');
+        $this->assertSame(RunReport::REFUSED_TO_START, $d->status);
     }
 
     // ---- Opus再レビューの再現入力（初回の1件） ----

@@ -26,6 +26,8 @@ final class RunRegistrar
         private readonly ApprovalChecker $approvals,
         /** 組織全体の件数の最大値（SEC-14）。計画の上限が、これを超えていれば、登録しない */
         private readonly ?int $orgMaxRows = null,
+        /** 渡されたときは、未解消の「処理中」「要確認」が残っていれば、登録しない（10-3） */
+        private readonly ?\Src\State\StepStateStore $states = null,
     ) {
     }
 
@@ -158,6 +160,9 @@ final class RunRegistrar
             $reasons[] = 'ドライランの接続先が、実行の接続先と違います';
         }
         PlanValidator::hasUnresolved($plan) && $reasons[] = '「未確定」が残っています';
+        if ($this->states !== null && ($un = $this->states->unresolvedAll()) !== []) {
+            $reasons[] = '未解消の「処理中」「要確認」が'.count($un).'件残っています。先に解消してください（10-3）';
+        }
 
         // 入力データの検査（R8）と、上限（R9）
         $cols = [];

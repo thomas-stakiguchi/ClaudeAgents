@@ -32,6 +32,12 @@ class PlanController extends Controller
             ],
             elementNames: ['login_page', 'order_page', 'item_code', 'quantity', 'submit_button', 'order_number'],
             orgMaxRows: (int) config('nlrpa.org_max_rows'),
+            // 監査の記録は、AIの自己申告ではなく、実際に呼んだAIと、実行エンジンの持つ版にする
+            engineFacts: $ai->identity() + [
+                'operations' => (int) StubRegistrations::hashInputs()['operations']->version,
+                'destinations' => (int) StubRegistrations::hashInputs()['destinations']->version,
+                'screen_record_version' => (int) StubRegistrations::hashInputs()['screen_record']->version,
+            ],
         );
         if ($r['plan'] === null) {
             return back()->withErrors(['scenario' => '実行計画を受け入れられません: '.implode(' / ', array_slice($r['errors'], 0, 3))]);

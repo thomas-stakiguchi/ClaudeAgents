@@ -51,7 +51,7 @@ final class Engine
         // 有効と認めるドライランの環境：偽の部品なら stub、本物のChromeなら chrome（1bに入ったら、スタブのドライランは、無効。9-2）
         $this->approvals = new ApprovalChecker($this->ledger, [$this->environmentName()]);
         $this->guard = new IrreversibleGuard($this->ledger, $this->states, $this->flags, $this->approvals);
-        $this->registrar = new RunRegistrar($this->ledger, $this->approvals, $orgMaxRows);
+        $this->registrar = new RunRegistrar($this->ledger, $this->approvals, $orgMaxRows, $this->states);
         $this->store = new AppStore($this->db, $clock);
     }
 
