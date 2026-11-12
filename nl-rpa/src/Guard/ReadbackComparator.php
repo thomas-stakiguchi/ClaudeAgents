@@ -32,13 +32,22 @@ final class ReadbackComparator
             $actual = self::stripThousands($actual);
         }
         if (isset($rule->date_format)) {
-            $e = self::date($expected, (string) $rule->date_format);
-            $a = self::date($actual, (string) $rule->date_format);
+            $fmt = self::phpDateFormat((string) $rule->date_format);
+            $e = $fmt === null ? null : self::date($expected, $fmt);
+            $a = $fmt === null ? null : self::date($actual, $fmt);
 
             return $e !== null && $a !== null && $e === $a;
         }
 
         return $expected === $actual;
+    }
+
+    /** 付録Aの書式（YYYY-MM-DD HH:mm:ss など）を、PHPの書式に直す（PHPの書式で書かれていても、そのまま通る）。対応しない文字があれば null */
+    public static function phpDateFormat(string $f): ?string
+    {
+        $out = strtr($f, ['YYYY' => 'Y', 'MM' => 'm', 'DD' => 'd', 'HH' => 'H', 'mm' => 'i', 'ss' => 's']);
+
+        return preg_match('/\A[YmdHis\-\/: .]+\z/', $out) ? $out : null;
     }
 
     private static function trim(string $s): string

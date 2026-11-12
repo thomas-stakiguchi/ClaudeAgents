@@ -34,6 +34,8 @@ final class FakeBrowser implements BrowserPort
 
     /** @var (\Closure(string,bool):bool)|null 試験用：画面に文字があるかの判定を、書き換える（文字, 本当の結果 → 返す結果） */
     public ?\Closure $textVisibleOverride = null;
+    /** @var (\Closure(string,string):string)|null 試験用：読み取りの結果を、書き換える（要素名, 本当の値 → 返す値）。画面が、読み返しの途中で変わるまね */
+    public ?\Closure $readOverride = null;
     /** 試験用：画面を初期状態へ戻すのに失敗する */
     public bool $failReset = false;
 
@@ -108,8 +110,9 @@ final class FakeBrowser implements BrowserPort
     public function readValue(string $element): string
     {
         $e = $this->element($element);
+        $v = $this->values[$element] ?? (string) ($e->value ?? '');
 
-        return $this->values[$element] ?? (string) ($e->value ?? '');
+        return $this->readOverride !== null ? ($this->readOverride)($element, $v) : $v;
     }
 
     /** 試験用：要素がなくても、例外にせず、入力済みの値（なければ空）を返す */

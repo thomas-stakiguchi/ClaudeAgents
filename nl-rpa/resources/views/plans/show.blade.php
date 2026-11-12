@@ -52,7 +52,7 @@
   <td><span class="indent{{ min($s['depth'], 4) }}">{{ $s['action'] }}</span></td>
   <td>{{ $s['destination'] }}</td><td>{{ $s['target'] }}</td><td>{{ $s['value'] }}</td><td>{{ $s['verify'] }}</td><td>{{ $s['readback'] }}</td>
   <td class="rev">@if ($s['reversible'] === null) — @elseif ($s['reversible']) 可 @else 不可 @endif</td>
-  <td>@if ($s['ai_supplied']) <span class="ai">AIが補った</span> @elseif ($s['source']) {{ $s['source'] }} @endif</td>
+  <td>@if ($s['ai_supplied']) <span class="ai">AIが補った</span>@if ($s['source']) （根拠の文にない値があります）{{ $s['source'] }}@endif @elseif ($s['source']) {{ $s['source'] }} @endif</td>
   <td><small>{{ $s['ai_label'] }}</small></td>
 </tr>
 @endforeach

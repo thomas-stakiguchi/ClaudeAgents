@@ -69,6 +69,27 @@ final class PlanPresenter
     }
 
     /**
+     * 根拠の文に書かれていない固定値（手順の value、読み返しの value）が、あるか。
+     * 根拠の文は、AIが選ぶ。文があっても、そこにない値は、AIが補ったものとして、1つずつ確認する（5章の5、9-3）。
+     */
+    private static function hasUnsourcedValue(\stdClass $s): bool
+    {
+        $source = is_string($s->source ?? null) ? $s->source : '';
+        $values = [];
+        is_string($s->value ?? null) && $values[] = $s->value;
+        foreach ($s->readback ?? [] as $r) {
+            is_object($r) && is_string($r->value ?? null) && $values[] = $r->value;
+        }
+        foreach ($values as $v) {
+            if ($v !== '' && ! str_contains($source, $v)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * @param array<mixed> $steps
      * @param array<string,int> $irreversible
      * @param list<array<string,mixed>> $out
@@ -89,7 +110,7 @@ final class PlanPresenter
                 'readback' => isset($s->readback) ? implode('、', array_map(fn ($r) => $r->target.' ← '.(isset($r->column) ? '列「'.$r->column.'」' : '固定値「'.$r->value.'」'), $s->readback)) : '',
                 'reversible' => $isSyntax ? null : ! isset($irreversible[(string) $s->id]),
                 'source' => $s->source ?? null,
-                'ai_supplied' => ! $isSyntax && ($s->source ?? null) === null,
+                'ai_supplied' => ! $isSyntax && (($s->source ?? null) === null || self::hasUnsourcedValue($s)),
                 'ai_label' => (string) ($s->label ?? ''),
             ];
             foreach (['steps', 'then', 'else'] as $k) {

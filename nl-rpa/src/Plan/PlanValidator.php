@@ -394,7 +394,9 @@ final class PlanValidator
             return;
         }
         property_exists($o, 'width') && ! in_array($o->width, ['full', 'half'], true) && $this->e("{$path}.width", 'full か half にしてください');
-        property_exists($o, 'date_format') && $this->str($o->date_format, "{$path}.date_format");
+        if (property_exists($o, 'date_format') && $this->str($o->date_format, "{$path}.date_format") && \Src\Guard\ReadbackComparator::phpDateFormat($o->date_format) === null) {
+            $this->e("{$path}.date_format", '対応していない書式です（YYYY・MM・DD・HH・mm・ss と、区切りの - / : . 空白だけ）');
+        }
         foreach (['thousand_separator', 'trim'] as $k) {
             property_exists($o, $k) && ! is_bool($o->{$k}) && $this->e("{$path}.{$k}", '真偽にしてください');
         }

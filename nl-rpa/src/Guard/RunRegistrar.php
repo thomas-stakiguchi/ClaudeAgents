@@ -105,12 +105,10 @@ final class RunRegistrar
         return null;
     }
 
-    /** 付録Aの書式（YYYY-MM-DD など）を、PHPの書式に直す。対応しない文字があれば null */
+    /** 付録Aの書式を、PHPの書式に直す。対応しない文字があれば null（ReadbackComparator と共通） */
     private static function phpDateFormat(string $f): ?string
     {
-        $out = strtr($f, ['YYYY' => 'Y', 'MM' => 'm', 'DD' => 'd', 'HH' => 'H', 'mm' => 'i', 'ss' => 's']);
-
-        return preg_match('/\A[YmdHis\-\/: .]+\z/', $out) ? $out : null;
+        return ReadbackComparator::phpDateFormat($f);
     }
 
     /**

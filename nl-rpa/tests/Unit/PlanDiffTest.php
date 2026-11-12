@@ -141,4 +141,19 @@ class PlanDiffTest extends TestCase
         $this->assertStringContainsString('evil', $x['new']);
         $this->assertLessThanOrEqual(402, mb_strlen($x['old']));
     }
+
+    public function test_根拠の文にない固定値のある取り消せない手順は_AIが補った扱いで1つずつ確認する(): void
+    {
+        $plan = $this->plan();
+        $inputs = StubRegistrations::hashInputs();
+        $this->assertNotContains('S-005', \App\Support\PlanPresenter::aiSuppliedIrreversible($plan, $inputs), '通常は、根拠の文があるので、補った扱いではない');
+        // 根拠の文はあるが、読み返しの固定値が、その文にない
+        $click = $plan->steps[1]->steps[3];
+        $click->readback[] = StrictJson::decode('{"target":"quantity","value":"99999"}');
+        $this->assertContains('S-005', \App\Support\PlanPresenter::aiSuppliedIrreversible($plan, $inputs));
+        // 文に書かれている値なら、補った扱いではない
+        $click->readback[count($click->readback) - 1]->value = '登録';
+        $this->assertNotContains('S-005', \App\Support\PlanPresenter::aiSuppliedIrreversible($plan, $inputs));
+    }
 }
+

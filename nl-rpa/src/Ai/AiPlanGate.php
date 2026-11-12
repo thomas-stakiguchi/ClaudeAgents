@@ -152,6 +152,14 @@ final class AiPlanGate
             if (isset($s->target) && ! in_array($s->target, $elements, true)) {
                 $errors[] = "画面の記録にない要素名です: {$s->target}";
             }
+            foreach ($s->readback ?? [] as $item) {
+                if (is_object($item) && isset($item->target) && ! in_array($item->target, $elements, true)) {
+                    $errors[] = "画面の記録にない要素名です（読み返しの対象）: {$item->target}";
+                }
+            }
+            if (isset($s->destination->name) && ! \Src\Policy\DestinationLimits::isAllowed((string) $s->destination->name)) {
+                $errors[] = "許可されていない接続先です: {$s->destination->name}";
+            }
             foreach (['steps', 'then', 'else'] as $k) {
                 isset($s->{$k}) && self::checkTargets($s->{$k}, $elements, $errors);
             }

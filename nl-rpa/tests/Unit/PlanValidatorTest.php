@@ -332,6 +332,31 @@ class PlanValidatorTest extends TestCase
         $this->assertSame(4, $r['plan']->allowlist_versions->destinations);
     }
 
+    public function test_ゲートは読み返しの対象の要素名と接続先も_早い段階で断る(): void
+    {
+        $names = ['login_page', 'order_page', 'item_code', 'quantity', 'submit_button', 'order_number'];
+        $p = $this->base();
+        $p->steps[1]->steps[2]->readback[0]->target = 'no_such_element';
+        $r = AiPlanGate::accept(json_encode($p, JSON_UNESCAPED_UNICODE), elementNames: $names);
+        $this->assertNull($r['plan']);
+        $this->assertStringContainsString('読み返しの対象', implode(' ', $r['errors']));
+
+        $p = $this->base();
+        $p->steps[0]->destination->name = 'prod';
+        $r = AiPlanGate::accept(json_encode($p, JSON_UNESCAPED_UNICODE), elementNames: $names);
+        $this->assertNull($r['plan']);
+        $this->assertStringContainsString('許可されていない接続先', implode(' ', $r['errors']));
+    }
+
+    public function test_date_formatは付録Aの書き方だけ受け入れる(): void
+    {
+        $p = $this->base();
+        $p->steps[1]->steps[2]->readback[0]->rule = (object) ['date_format' => 'YYYY年MM月'];
+        $this->assertNotSame([], PlanValidator::validate($p));
+        $p->steps[1]->steps[2]->readback[0]->rule = (object) ['date_format' => 'YYYY-MM-DD'];
+        $this->assertSame([], PlanValidator::validate($p));
+    }
+
     public function test_ゲートは人の列定義と違えば拒否(): void
     {
         $cols = [

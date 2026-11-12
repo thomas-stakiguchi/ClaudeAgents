@@ -350,9 +350,9 @@ final class PlanRunner
                         $rowReport['reads'] = $reads;
                         $rowReport['steps'] = $ctx->log;
                         $report->rows[] = $rowReport;
-                        $this->safeReset();
+                        $resetError = $this->safeReset();
 
-                        return $report->halt($why);
+                        return $report->halt($why.($resetError === null ? '' : "（さらに、画面を初期状態に戻せませんでした: {$resetError}。次の実行の前に、画面を確認してください）"));
                     }
                     if ($stop) {
                         $rowReport['status'] = 'dry_run_stopped_before_irreversible';
@@ -405,12 +405,16 @@ final class PlanRunner
         return null;
     }
 
-    private function safeReset(): void
+    /** @return string|null 戻せなかったときの理由 */
+    private function safeReset(): ?string
     {
         try {
             $this->browser->resetToStart();
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            return $e->getMessage();
         }
+
+        return null;
     }
 
     /** その行の、取り消せない手順がすべて「成功」か */
@@ -589,6 +593,9 @@ final class PlanRunner
         if ($ctx->mode === 'dry') {
             if (($s->readback ?? []) === []) {
                 return "取り消せない手順に、読み返し照合の項目がありません: {$s->id}"; // 本番で、Guardが必ず拒否する
+            }
+            if (($missing = \Src\Guard\IrreversibleGuard::uncoveredColumns($ctx->plan, $s)) !== []) {
+                return "入力する列「{$missing[0]}」が、読み返し照合に含まれていません: {$s->id}"; // 本番で、Guardが必ず拒否する
             }
             // ドライラン：取り消せない操作は実行しない。手前で、読み返し照合だけ確かめて、この行を終える
             foreach ($s->readback ?? [] as $item) {

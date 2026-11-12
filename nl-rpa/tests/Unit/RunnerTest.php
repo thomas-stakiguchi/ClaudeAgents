@@ -576,6 +576,34 @@ class RunnerTest extends TestCase
         }
     }
 
+    public function test_操作の直前の読み直しで値が変わっていたら_操作せず要確認になる(): void
+    {
+        $this->prepareRun();
+        // 検査に通って、「処理中」が書かれたあと（＝操作の直前の読み直し）で、画面の値が変わる
+        $this->browser->readOverride = function (string $el, string $v): string {
+            if ($el === 'item_code' && $v === 'ABC' && $this->states->get('K-001', \Tests\TestCase::SUBMIT) === 'processing') {
+                return 'EVIL';
+            }
+
+            return $v;
+        };
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $this->rows);
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertSame([], $this->browser->orders(), '値が変わったので、クリックしない');
+        $this->assertSame('needs_review', $this->states->get('K-001', \Tests\TestCase::SUBMIT));
+    }
+
+    public function test_停止したあと画面を戻せなければ_理由にそのことを書く(): void
+    {
+        $this->prepareRun();
+        $this->browser->failReset = true;
+        $rows = $this->rows;
+        $this->browser->clickDoesNothing = true; // 確認条件を満たせず、要確認で止まる
+        $r = $this->runner->run($this->plan, $this->inputs, 'RUN-1', $rows);
+        $this->assertSame(RunReport::HALTED, $r->status);
+        $this->assertStringContainsString('初期状態に戻せませんでした', implode(' ', $r->reasons));
+    }
+
     public function test_10_3_別の行に要確認が残っていれば_本番を始めない_登録もできない(): void
     {
         $this->prepareRun();

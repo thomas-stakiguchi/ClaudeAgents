@@ -243,6 +243,16 @@ class GuardTest extends TestCase
         $this->assertRefused($this->guard->run($this->req(['readbackRaw' => ['item_code' => 'ABC']]), $a), $a, '読み返した値がありません');
     }
 
+    public function test_入力する列が読み返しに含まれていなければ拒否(): void
+    {
+        // 数量を読み返さない計画（承認・登録は通るが、関数の中で止まる）
+        $this->plan->steps[1]->steps[2]->readback = [$this->plan->steps[1]->steps[2]->readback[0]];
+        $this->approve();
+        $this->assertSame([], $this->register('RUN-2'));
+        $a = $this->action();
+        $this->assertRefused($this->guard->run($this->req(['runId' => 'RUN-2', 'readbackRaw' => ['item_code' => ' ABC ']]), $a), $a, '読み返し照合に含まれていません');
+    }
+
     public function test_読み返し項目が指定されていない手順は拒否(): void
     {
         unset($this->plan->steps[1]->steps[2]->readback);

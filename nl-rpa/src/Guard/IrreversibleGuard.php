@@ -292,6 +292,9 @@ final class IrreversibleGuard
 
             return;
         }
+        foreach (self::uncoveredColumns($r->plan, $step) as $col) {
+            $reasons[] = "入力する列「{$col}」が、読み返し照合に含まれていません";
+        }
         foreach ($items as $item) {
             $target = $item->target;
             if (! array_key_exists($target, $r->readbackRaw) || ! is_string($r->readbackRaw[$target])) {
@@ -311,6 +314,58 @@ final class IrreversibleGuard
                 $reasons[] = "読み返した値が、入力データの値と一致しません: {$target}";
             }
         }
+    }
+
+    /**
+     * 画面に入力する列のうち、この手順の読み返し照合に含まれていないもの（入力した値の一部しか確かめないまま、実行しない。9-3）。
+     * ドライランも、同じ関数で検査する。
+     *
+     * @return list<string>
+     */
+    public static function uncoveredColumns(\stdClass $plan, \stdClass $step): array
+    {
+        $covered = [];
+        foreach ($step->readback ?? [] as $item) {
+            isset($item->column) && is_string($item->column) && $covered[$item->column] = true;
+        }
+
+        return array_values(array_filter(self::typedColumns($plan->steps ?? [], (string) ($step->id ?? '')), static fn (string $c): bool => ! isset($covered[$c])));
+    }
+
+    /**
+     * この手順より前に、画面に入力する列（type_text の column。計画の記述の順）。この手順自身と、後の手順は、含めない。
+     *
+     * @param array<mixed> $steps
+     * @param bool         $reached 手順 $stopId に、すでに着いたか（参照渡し。着いたら、以降は集めない）
+     * @return list<string>
+     */
+    private static function typedColumns(array $steps, string $stopId, bool &$reached = false): array
+    {
+        $out = [];
+        foreach ($steps as $s) {
+            if ($reached) {
+                break;
+            }
+            if (! $s instanceof \stdClass) {
+                continue;
+            }
+            if (($s->id ?? null) === $stopId) {
+                $reached = true;
+                break;
+            }
+            if (($s->action ?? null) === 'type_text' && isset($s->column) && is_string($s->column)) {
+                $out[$s->column] = true;
+            }
+            foreach (['steps', 'then', 'else'] as $k) {
+                if (isset($s->{$k}) && is_array($s->{$k})) {
+                    foreach (self::typedColumns($s->{$k}, $stopId, $reached) as $c) {
+                        $out[$c] = true;
+                    }
+                }
+            }
+        }
+
+        return array_keys($out);
     }
 
     /** @param list<string> $reasons */
