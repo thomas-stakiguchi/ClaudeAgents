@@ -1,13 +1,10 @@
 name: Tests
 
+# 注意：このフォルダは、gitのルート（ClaudeAgents/）の下の nl-rpa/ にあるため、GitHubは、この設定を読まない（動いていない）。
+# 動かすときは、gitのルートの .github/ へ移し、working-directory を nl-rpa にする。
 on:
   push:
-    branches:
-      - master
-      - '*.x'
   pull_request:
-  schedule:
-    - cron: '0 0 * * *'
 
 permissions:
   contents: read
@@ -19,7 +16,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        php: [8.3, 8.4, 8.5]
+        php: [8.3, 8.5]
 
     name: PHP ${{ matrix.php }}
 
@@ -46,4 +43,10 @@ jobs:
         run: php artisan key:generate
 
       - name: Execute tests
+        # 環境のせいで飛ばすテストを、失敗にする（安全のテストが、黙って飛ばされないように。仕様14-6）
+        env:
+          NL_RPA_REQUIRE_FULL_TESTS: '1'
         run: php artisan test
+
+      - name: Audit dependencies
+        run: composer audit

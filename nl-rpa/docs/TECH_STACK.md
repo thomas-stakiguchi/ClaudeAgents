@@ -17,7 +17,9 @@
 | 秘密情報の検出 | 未選定 | コミット時に検出する（仕様14-6。1aの最初の作業で選ぶ） |
 | 実行PCのOS | 未確認 | 仕様11章。1aの前に確定。Windowsの場合は、php.netの2026-10-26の告知にあるWindows版ビルド（8.5.12-1）を確認する |
 | データ保存 | SQLite（PHPの pdo_sqlite 拡張） | 状態・記録の保存。PHPに同梱される拡張（バージョンは、実行環境で確認） |
-| テスト | PHPUnit 12.5.43（composer.lock） | 導入済み。開発用の依存は、composer.json の require-dev を見る |
+| テスト | PHPUnit 12.5.43（composer.lock） | 導入済み |
+| 開発用の依存（require-dev） | fakerphp/faker、laravel/pail、laravel/pao、laravel/pint、mockery/mockery、nunomaduro/collision、phpunit/phpunit | Laravelの骨組みが入れたもの。本番の実行には使わない。`composer audit` で、既知の脆弱性がないことを確認した（2026-11-12）。追加するたびに、ここを更新する（SEC-11） |
+| 秘密情報の検査 | `tools/scan-secrets.php`（自作の簡易版） | 暫定。専用ツール（gitleaks など）は、未選定 |
 | 画面 | Laravel標準のBlade＋少量のJavaScript | 外部のJavaScriptライブラリは、必要になるまで入れない（供給網のリスクを減らす） |
 | ブラウザ本体 | Chrome | バージョンの範囲は、1bの前に確認し、ここに記録する。起動時にバージョンを記録し、範囲外なら停止する（仕様14-2） |
 
