@@ -251,4 +251,53 @@ class StateTest extends TestCase
         }
         $this->assertSame([], $failures);
     }
+
+    public function test_ほかのプロセスが長く排他ロックしていても_待って開ける(): void
+    {
+        $path = sys_get_temp_dir().'/nlrpa_hold_'.bin2hex(random_bytes(4)).'.sqlite';
+        // WALではない、ふつうのDBを、先に作る。Db::open は、WALへの切り替えが要り、他のプロセスが排他ロックしている間は、待たされる
+        $raw = new \PDO('sqlite:'.$path, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        $raw->exec('CREATE TABLE t (x INTEGER)');
+        unset($raw);
+        $p = proc_open([PHP_BINARY, dirname(__DIR__).'/Support/db_hold.php', $path, '1.5'], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        try {
+            $this->assertSame('LOCKED', trim((string) fgets($pipes[1])));
+            $t = microtime(true);
+            $db = Db::open($path);
+            $this->assertGreaterThan(0.3, microtime(true) - $t, 'ロックの間に、待たずに開いた（試験が、意味を持っていない）');
+            $this->assertNotNull($db->pdo->query('SELECT 1')->fetch());
+        } finally {
+            @proc_close($p);
+            foreach (glob($path.'*') ?: [] as $f) {
+                @unlink($f);
+            }
+        }
+    }
+
+    public function test_古いデータベースに同時に列を足しても_重複で失敗しない(): void
+    {
+        $path = sys_get_temp_dir().'/nlrpa_old_'.bin2hex(random_bytes(4)).'.sqlite';
+        // proc_start の列がない、古い形のDBを作る
+        $pdo = new \PDO('sqlite:'.$path, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+        $pdo->exec('CREATE TABLE workers (pid INTEGER PRIMARY KEY, request_id INTEGER NOT NULL, started_at TEXT NOT NULL)');
+        $pdo->exec('CREATE TABLE browser_profiles (dir TEXT PRIMARY KEY, worker_pid INTEGER NOT NULL, created_at TEXT NOT NULL)');
+        unset($pdo);
+        $procs = [];
+        for ($i = 0; $i < 6; $i++) {
+            $procs[] = [proc_open([PHP_BINARY, dirname(__DIR__).'/Support/db_open.php', $path], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes), $pipes];
+        }
+        $out = [];
+        foreach ($procs as [$p, $pipes]) {
+            $out[] = stream_get_contents($pipes[1]).stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_close($p);
+        }
+        $this->assertSame(array_fill(0, 6, 'OK'), $out);
+        $cols = array_column(Db::open($path)->pdo->query('PRAGMA table_info(workers)')->fetchAll(), 'name');
+        $this->assertContains('proc_start', $cols);
+        foreach (glob($path.'*') ?: [] as $f) {
+            @unlink($f);
+        }
+    }
 }

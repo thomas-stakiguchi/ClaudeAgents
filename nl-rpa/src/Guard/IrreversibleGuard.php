@@ -150,7 +150,7 @@ final class IrreversibleGuard
         } catch (\InvalidArgumentException $e) {
             return [...$reasons, '計画ハッシュを計算できません: '.$e->getMessage()];
         }
-        ! $this->approvals->hasFinalApproval($hash) && $reasons[] = 'この計画ハッシュの最終承認がありません（計画が承認後に変わった可能性）';
+        
 
         // 3. 実行の登録（ドライラン、接続先、各行のハッシュ）
         $run = $this->ledger->latest('run', $r->runId);
@@ -158,6 +158,8 @@ final class IrreversibleGuard
             return [...$reasons, '実行が登録されていません'];
         }
         ($run->plan_hash ?? null) !== $hash && $reasons[] = '実行の登録時の計画ハッシュと違います（計画・許可リストが変わった可能性）';
+        // 最終承認は、計画ハッシュと「実行の登録のドライランID」に結び付く（9-2）。環境が変わったら、無効
+        ! $this->approvals->hasFinalApproval($hash, (string) ($run->dry_run_id ?? '')) && $reasons[] = 'この計画ハッシュと、ドライランに結び付いた、最終承認がありません（計画が承認後に変わった、または環境が変わった可能性）';
         $dry = $this->approvals->findPassedDryRun($hash, (string) ($run->dry_run_id ?? ''));
         $dry['error'] !== null && $reasons[] = $dry['error'];
 

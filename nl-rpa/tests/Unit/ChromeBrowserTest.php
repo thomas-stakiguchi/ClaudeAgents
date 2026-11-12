@@ -98,7 +98,7 @@ class ChromeBrowserTest extends TestCase
     public function test_通しの流れ_本物のChromeで_ドライランから本番実行まで(): void
     {
         $port = $this->freePort();
-        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log']);
+        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log', 'NLRPA_STUB_ATTACKS' => '1']);
         $db = Db::open(':memory:');
         $t = 0;
         $clock = fn (): string => sprintf('2026-11-11T00:%02d:%02dZ', intdiv($t, 60) % 60, $t++ % 60);
@@ -126,7 +126,7 @@ class ChromeBrowserTest extends TestCase
             $dry = $runner->dryRun($plan, $inputs, $rows, 'DR-1');
             $this->assertSame(RunReport::COMPLETED, $dry->status, implode(' / ', $dry->reasons));
             $this->assertFileDoesNotExist($this->tmp.'/orders.log', 'ドライランでは、取り消せない操作を実行しない');
-            $ledger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => '佐藤', 'os_user' => 't']);
+            $ledger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => '佐藤', 'os_user' => 't', 'dry_run_id' => 'DR-1']);
             $this->assertSame([], $registrar->register('RUN-1', $plan, $inputs, 'DR-1', 'stub', $rows));
             $r1 = $runner->run($plan, $inputs, 'RUN-1', $rows);
             $this->assertSame(RunReport::AWAITING_FIRST_ROW, $r1->status, implode(' / ', $r1->reasons));
@@ -221,7 +221,7 @@ class ChromeBrowserTest extends TestCase
     public function test_登録外の画面名や要素名は拒否する(): void
     {
         [$guard, $port] = $this->guardAndPort();
-        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log']);
+        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log', 'NLRPA_STUB_ATTACKS' => '1']);
         $b = $this->browser($guard, $port);
         try {
             foreach ([fn () => $b->openUrl('evil_page'), fn () => $b->readValue('nope')] as $f) {
@@ -246,7 +246,7 @@ class ChromeBrowserTest extends TestCase
     public function test_Chromeのデバッグ接続は_外部のOriginを受け付けない(): void
     {
         [$guard, $port] = $this->guardAndPort();
-        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log']);
+        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log', 'NLRPA_STUB_ATTACKS' => '1']);
         $b = $this->browser($guard, $port);
         try {
             $b->openUrl('login_page');
@@ -303,7 +303,7 @@ class ChromeBrowserTest extends TestCase
     private function webStub(): int
     {
         $port = $this->freePort();
-        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log']);
+        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log', 'NLRPA_STUB_ATTACKS' => '1']);
 
         return $port;
     }
@@ -476,5 +476,18 @@ class ChromeBrowserTest extends TestCase
             $this->assertStringContainsString('許可した範囲の外', $e->getMessage());
         }
         $this->assertSame($profileBefore, glob($this->tmp.'/profiles/*') ?: [], '停止したのに、プロファイルが残った');
+    }
+
+    public function test_攻撃用の画面は_環境変数で有効にしたときだけ開ける(): void
+    {
+        $port = $this->freePort();
+        $this->serve($port, dirname(__DIR__, 2).'/stubs/web/router.php', ['ORDER_LOG' => $this->tmp.'/orders.log']); // 環境変数なし（nlrpa:stub-web と同じ）
+        $ctx = stream_context_create(['http' => ['ignore_errors' => true]]);
+        foreach (['/trap', '/webrtc', '/download', '/file.bin', '/blank', '/blob', '/late'] as $path) {
+            @file_get_contents("http://127.0.0.1:{$port}{$path}", false, $ctx);
+            $this->assertStringContainsString('404', $http_response_header[0] ?? '', $path);
+        }
+        @file_get_contents("http://127.0.0.1:{$port}/login", false, $ctx);
+        $this->assertStringContainsString('200', $http_response_header[0] ?? '');
     }
 }

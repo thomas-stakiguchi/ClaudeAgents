@@ -97,7 +97,7 @@ class GuardTest extends TestCase
     private function approve(string $env = 'stub', string $result = 'passed', string $dryRunId = 'DR-1'): void
     {
         $hash = PlanHasher::hash($this->plan, $this->inputs);
-        $this->ledger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => '佐藤', 'os_user' => 'tester']);
+        $this->ledger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => '佐藤', 'os_user' => 'tester', 'dry_run_id' => $dryRunId]);
         $this->ledger->append('dry_run', $hash, (object) ['dry_run_id' => $dryRunId, 'result' => $result, 'environment' => $env, 'destination_name' => 'stub']);
     }
 

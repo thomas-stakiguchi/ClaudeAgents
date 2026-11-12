@@ -23,10 +23,11 @@ final class Db
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
         ]);
-        $pdo->exec('PRAGMA busy_timeout = 5000');
         $pdo->exec('PRAGMA foreign_keys = ON');
         // 新しいファイルを、複数のプロセスが同時に開くと、WALへの切り替えや表の作成が、「database is locked」で失敗することがある
         // （busy_timeout が効かない場面がある）。短い間隔で、繰り返す。
+        // 初期化の間だけ、1回あたりの待ちを短くして（0.3秒）、何度も試す。最悪でも、合計で約17秒。終わったら、通常の5秒に戻す
+        $pdo->exec('PRAGMA busy_timeout = 300');
         self::retryWhileLocked(static function () use ($pdo, $path): void {
             if ($path !== ':memory:') {
                 $pdo->exec('PRAGMA journal_mode = WAL');
@@ -34,10 +35,11 @@ final class Db
             }
             Schema::migrate($pdo);
         });
+        $pdo->exec('PRAGMA busy_timeout = 5000');
         return new self($pdo);
     }
 
-    /** @param callable():void $fn ロックされている間（最大約6秒）、短い間隔で、繰り返す。ほかの失敗は、そのまま投げる */
+    /** @param callable():void $fn ロックされている間（最大40回。0.3秒の待ち＋0.03〜0.12秒の間隔。合計で、最悪でも約17秒）、繰り返す。ほかの失敗は、そのまま投げる */
     private static function retryWhileLocked(callable $fn): void
     {
         for ($i = 0;; $i++) {
@@ -47,7 +49,7 @@ final class Db
                 return;
             } catch (\PDOException $e) {
                 $locked = str_contains($e->getMessage(), 'database is locked') || str_contains($e->getMessage(), 'database table is locked') || ($e->errorInfo[1] ?? 0) === 5 || ($e->errorInfo[1] ?? 0) === 6;
-                if (! $locked || $i >= 60) {
+                if (! $locked || $i >= 40) {
                     throw $e;
                 }
                 usleep(random_int(30, 120) * 1000);

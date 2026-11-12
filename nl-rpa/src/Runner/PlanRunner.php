@@ -147,8 +147,8 @@ final class PlanRunner
                 return $this->refuse('実行の登録時の計画ハッシュと違います（計画・許可リストが変わった可能性）');
             }
             // 本番の条件（9-2）を、開始時に確かめる（取り消せる手順が実行されてから、Guardに止められるのを防ぐ）
-            if (! $this->approvals->hasFinalApproval($ctx->hash)) {
-                return $this->refuse('この計画ハッシュの最終承認がありません');
+            if (! $this->approvals->hasFinalApproval($ctx->hash, (string) ($run->dry_run_id ?? ''))) {
+                return $this->refuse('この計画ハッシュと、ドライランに結び付いた、最終承認がありません（環境が変わった場合は、ドライランと最終承認を、やり直してください）');
             }
             $dry = $this->approvals->findPassedDryRun($ctx->hash, (string) ($run->dry_run_id ?? ''));
             if ($dry['error'] !== null) {

@@ -149,7 +149,7 @@ final class RunRegistrar
             return ['計画ハッシュを計算できません: '.$e->getMessage()];
         }
         $reasons = [];
-        ! $this->approvals->hasFinalApproval($hash) && $reasons[] = 'この計画ハッシュの最終承認がありません';
+        ! $this->approvals->hasFinalApproval($hash, $dryRunId) && $reasons[] = 'この計画ハッシュの最終承認がありません';
         $dry = $this->approvals->findPassedDryRun($hash, $dryRunId);
         $dry['error'] !== null && $reasons[] = $dry['error'];
         if (! DestinationLimits::isAllowed($destinationName)) {

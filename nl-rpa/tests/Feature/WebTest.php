@@ -812,6 +812,13 @@ class WebTest extends TestCase
     /** @var resource|null */
     private $stubProc = null;
 
+    /** アプリを作り直す（本番で、設定を変えて、起動し直すのと同じ）。同じアプリの中では、ルートが、コントローラー（とEngine）を、使い回すため */
+    private function restartApp(): void
+    {
+        $this->refreshApplication();
+        config(['nlrpa.data_dir' => $this->dir, 'nlrpa.port' => 8080]);
+    }
+
     protected function stopStub(): void
     {
         if ($this->stubProc !== null) {
@@ -823,7 +830,7 @@ class WebTest extends TestCase
 
     public function test_画面から本物のChromeまで_計画の承認から本番実行を通しで動かす(): void
     {
-        $this->useChrome();
+        [, $stubPort] = $this->useChrome();
         try {
             $this->login();
             $hash = $this->createPlan();
@@ -835,9 +842,9 @@ class WebTest extends TestCase
             $dryRunId = $this->engine()->store->getRequest($dryReq)['dry_run_id'];
             // ドライランの環境は、本物のChrome（chrome）として記録される。バージョンも、記録に残る
             $dry = $this->engine()->ledger->all('dry_run', $hash)[0];
-            $this->assertSame('chrome', $dry->environment);
+            $this->assertSame('chrome@http://localhost:'.$stubPort, $dry->environment);
             $w = array_values(array_filter($this->engine()->ledger->all('worker', 'request:'.$dryReq), fn ($x) => $x->event === 'finished'))[0];
-            $this->assertSame('chrome', $w->browser);
+            $this->assertSame('chrome@http://localhost:'.$stubPort, $w->browser);
             $this->assertMatchesRegularExpression('#Chrome/\d+\.#', (string) $w->chrome_version);
 
             $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $dryRunId])->assertSessionHasNoErrors();
@@ -878,9 +885,8 @@ class WebTest extends TestCase
         $this->worker($req);
         $dryRunId = $this->engine()->store->getRequest($req)['dry_run_id'];
         $this->assertSame('stub', $this->engine()->ledger->all('dry_run', $hash)[0]->environment);
-        // 本物のChromeに切り替える（新しい Engine を、同じデータの置き場で作る）
-        $this->app->forgetInstance(Engine::class);
-        $this->app->forgetInstance(AccessToken::class);
+        // 本物のChromeに切り替える（設定を変えて、起動し直す）
+        $this->restartApp();
         config(['nlrpa.browser' => 'chrome']);
         $this->engine();
         $res = $this->engine()->approvals->findPassedDryRun($hash, $dryRunId);
@@ -891,17 +897,12 @@ class WebTest extends TestCase
         $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $dryRunId])->assertSessionHasErrors('final');
     }
 
-    public function test_スタブの画面のポートがアプリ自身と同じなら_ワーカーは起動せず理由を記録する(): void
+    public function test_スタブの画面のポートがアプリ自身と同じなら_最初の時点で止まる(): void
     {
         config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => 8080]); // アプリ自身のポート（nlrpa.port = 8080）
-        $this->login();
-        $hash = $this->createPlan();
-        $this->post2("/plans/{$hash}/approve-plan");
-        $this->post2("/plans/{$hash}/dry-run");
-        $out = $this->worker($this->lastRequestId());
-        $this->assertStringContainsString('aborted', $out);
-        $this->assertStringContainsString('アプリ自身のポート', $out);
-        $this->assertSame([], $this->engine()->ledger->all('dry_run', $hash), '起動できないのに、ドライランの記録ができた');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('アプリ自身のポート');
+        $this->engine();
     }
 
     public function test_ブラウザの設定が不正なら_最初の時点で止まる(): void
@@ -924,6 +925,231 @@ class WebTest extends TestCase
                 $thrown = true;
             }
             $this->assertTrue($thrown, (string) $bad);
+        }
+    }
+
+    public function test_最終承認はドライランに結び付く_環境を切り替えたら_切り替え前の最終承認では登録も実行もできない(): void
+    {
+        // ① 偽の部品で、ドライラン→最終承認まで済ませる
+        $this->login();
+        $hash = $this->createPlan();
+        $this->post2("/plans/{$hash}/approve-plan");
+        $this->post2("/plans/{$hash}/dry-run");
+        $req1 = $this->lastRequestId();
+        $this->worker($req1);
+        $fakeDry = $this->engine()->store->getRequest($req1)['dry_run_id'];
+        $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $fakeDry])->assertSessionHasNoErrors();
+        $input = $this->csv();
+        $this->assertTrue($this->engine()->approvals->hasFinalApproval($hash, $fakeDry));
+
+        // ② 本物のChromeに切り替える（設定を変えて、起動し直す）。ドライランだけ合格させ、最終承認は、しない
+        $this->restartApp();
+        [, $port] = $this->useChrome();
+        try {
+            $this->login();
+            $this->assertFalse($this->engine()->approvals->hasFinalApproval($hash, $fakeDry), '切り替え前の最終承認が、有効のまま');
+            $this->post2("/plans/{$hash}/dry-run");
+            $req2 = $this->lastRequestId();
+            $this->assertStringContainsString('completed', $this->worker($req2));
+            $chromeDry = $this->engine()->store->getRequest($req2)['dry_run_id'];
+            // 登録できない：偽の部品のドライラン（環境が違う）でも、Chromeのドライラン（最終承認がない）でも
+            $this->post2("/plans/{$hash}/register", ['input_set_id' => $input, 'dry_run_id' => $fakeDry, 'count' => '3'])->assertSessionHasErrors('register');
+            $this->post2("/plans/{$hash}/register", ['input_set_id' => $input, 'dry_run_id' => $chromeDry, 'count' => '3'])->assertSessionHasErrors('register');
+            $this->assertSame([], $this->engine()->store->runsOfPlan($hash));
+            $this->assertFileDoesNotExist($this->engine()->stubOrdersLog());
+            // Chromeのドライランに、最終承認すれば、登録できる
+            $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $chromeDry])->assertSessionHasNoErrors();
+            $this->post2("/plans/{$hash}/register", ['input_set_id' => $input, 'dry_run_id' => $chromeDry, 'count' => '3'])->assertSessionHasNoErrors();
+            $this->assertCount(1, $this->engine()->store->runsOfPlan($hash));
+            $this->assertStringContainsString('chrome@http://localhost:'.$port, $this->engine()->ledger->all('dry_run', $hash)[1]->environment);
+        } finally {
+            $this->stopStub();
+        }
+
+        // ③ 逆向き（本物のChrome→偽の部品）。Chromeのドライランと最終承認は、偽の部品の環境では、使えない
+        $this->restartApp();
+        config(['nlrpa.browser' => 'fake']);
+        $this->assertFalse($this->engine()->approvals->hasFinalApproval($hash, $chromeDry), 'Chromeの最終承認が、偽の部品で、有効');
+        $this->assertSame('stub', $this->engine()->environmentName());
+        $this->assertTrue($this->engine()->approvals->hasFinalApproval($hash, $fakeDry), '偽の部品に戻れば、偽の部品の最終承認は、有効（記録は残っている。制約として、記録）');
+    }
+
+    public function test_接続先を変えたら_古いドライランと最終承認は無効になる(): void
+    {
+        $this->engine();
+        config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => 18310]);
+        $this->app->forgetInstance(Engine::class);
+        $envA = $this->engine()->environmentName();
+        config(['nlrpa.stub_port' => 18311]);
+        $this->app->forgetInstance(Engine::class);
+        $envB = $this->engine()->environmentName();
+        $this->assertSame('chrome@http://localhost:18310', $envA);
+        $this->assertNotSame($envA, $envB);
+        // Aの環境で合格したドライランは、Bの環境では、無効
+        $e = $this->engine();
+        $hash = 'sha256:'.str_repeat('a', 64);
+        $e->ledger->append('dry_run', $hash, (object) ['dry_run_id' => 'DR-A', 'result' => 'passed', 'environment' => $envA, 'destination_name' => 'stub']);
+        $e->ledger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => 'x', 'os_user' => 'y', 'dry_run_id' => 'DR-A']);
+        $this->assertNotNull($e->approvals->findPassedDryRun($hash, 'DR-A')['error']);
+        $this->assertFalse($e->approvals->hasFinalApproval($hash, 'DR-A'));
+    }
+
+    public function test_許可するChromeのバージョンの指定が不正なら_最初の時点で止まる(): void
+    {
+        foreach (['abc', ',,', '153.0', '0', '153,,154', '-1', '153;rm'] as $bad) {
+            config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => 18320, 'nlrpa.chrome_allowed_major' => $bad, 'nlrpa.chrome_binary' => '/bin/true']);
+            $this->app->forgetInstance(Engine::class);
+            $thrown = false;
+            try {
+                $this->engine()->newBrowser();
+            } catch (\RuntimeException $e) {
+                $thrown = str_contains($e->getMessage(), 'NL_RPA_CHROME_MAJOR');
+            }
+            $this->assertTrue($thrown, $bad);
+        }
+        config(['nlrpa.chrome_allowed_major' => '153,154']);
+        $this->app->forgetInstance(Engine::class);
+        $this->assertInstanceOf(\Src\Browser\ChromeBrowser::class, $this->engine()->newBrowser());
+    }
+
+    /**
+     * 本物のChromeで、行数の多いドライランを、別プロセスのワーカーとして動かし始める。
+     *
+     * @return array{0:resource,1:int,2:string,3:int} プロセス、ワーカーのPID、プロファイルのディレクトリ、要求の番号
+     */
+    private function startSlowWorker(): array
+    {
+        [$chrome, $port] = $this->useChrome();
+        $this->login();
+        $hash = $this->createPlan();
+        $this->post2("/plans/{$hash}/approve-plan");
+        $rows = "商品コード,数量,伝票番号\n";
+        for ($i = 1; $i <= 80; $i++) {
+            $rows .= sprintf("ITEM%03d,%d,K-%03d\n", $i, $i, $i);
+        }
+        $input = $this->csv($rows);
+        $this->post2("/plans/{$hash}/dry-run", ['input_set_id' => $input])->assertSessionHasNoErrors();
+        $req = $this->lastRequestId();
+        $env = array_merge(getenv(), ['NL_RPA_DATA_DIR' => $this->dir, 'NL_RPA_BROWSER' => 'chrome', 'NL_RPA_CHROME' => $chrome, 'NL_RPA_CHROME_NO_SANDBOX' => 'true', 'NL_RPA_STUB_PORT' => (string) $port, 'APP_DEBUG' => 'false']);
+        $proc = proc_open([PHP_BINARY, base_path('artisan'), 'nlrpa:worker', (string) $req], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $p, base_path(), $env);
+        $pid = proc_get_status($proc)['pid'];
+        $dir = '';
+        for ($i = 0; $i < 100; $i++) { // ワーカーが、Chromeを起動して、プロファイルを記録するまで、待つ
+            $profiles = $this->engine()->store->profiles();
+            if ($profiles !== [] && $this->chromeOf($profiles[0]['dir']) !== []) {
+                $dir = $profiles[0]['dir'];
+                break;
+            }
+            usleep(200000);
+        }
+        $this->assertNotSame('', $dir, 'ワーカーが、Chromeを起動しなかった');
+
+        return [$proc, $pid, $dir, $req];
+    }
+
+    public function test_ワーカーが終了の合図を受けたら_Chromeを閉じ_プロファイルを破棄し_ロックを解放する(): void
+    {
+        if (! is_dir('/proc')) {
+            $this->markTestSkipped('Linux専用');
+        }
+        [$proc, $pid, $dir] = $this->startSlowWorker();
+        try {
+            posix_kill($pid, SIGTERM);
+            $exited = false;
+            for ($i = 0; $i < 100; $i++) {
+                if (! proc_get_status($proc)['running']) {
+                    $exited = true;
+                    break;
+                }
+                usleep(100000);
+            }
+            $this->assertTrue($exited, 'ワーカーが、終了の合図で終了しなかった');
+            usleep(500000);
+            $this->assertEmpty($this->chromeOf($dir), 'Chromeが、孤児として残った');
+            $this->assertDirectoryDoesNotExist($dir);
+            $lock = new \Src\Runner\RunLock($this->dir.'/run.lock');
+            $this->assertTrue($lock->acquire(), '実行のロックが、解放されていない');
+            $lock->release();
+            // 要求は「実行中」のまま残る。次の recover が、異常終了にする
+            $this->assertSame(0, Artisan::call('nlrpa:recover'));
+            $this->assertSame('done', $this->engine()->store->getRequest($this->lastRequestId())['status']);
+        } finally {
+            @proc_terminate($proc, 9);
+            @proc_close($proc);
+        }
+    }
+
+    public function test_ワーカーがSIGKILLで死んで_孤児のChromeが残っても_recoverは動き_回収する(): void
+    {
+        if (! is_dir('/proc')) {
+            $this->markTestSkipped('Linux専用');
+        }
+        [$proc, $pid, $dir, $req] = $this->startSlowWorker();
+        try {
+            posix_kill($pid, SIGKILL);
+            usleep(800000);
+            $this->assertNotEmpty($this->chromeOf($dir), '孤児のChromeが、いない（この試験は、意味がない）');
+            // 孤児のChromeが、実行のロックのファイルを開いたままでも、recover は、止まらない
+            $this->assertSame(0, Artisan::call('nlrpa:recover'), Artisan::output());
+            $this->assertEmpty($this->chromeOf($dir), '孤児のChromeが、回収されていない');
+            $this->assertDirectoryDoesNotExist($dir);
+            $this->assertSame([], $this->engine()->store->profiles());
+            $this->assertSame('done', $this->engine()->store->getRequest($req)['status']);
+            $lock = new \Src\Runner\RunLock($this->dir.'/run.lock');
+            $this->assertTrue($lock->acquire());
+            $lock->release();
+        } finally {
+            foreach ($this->chromeOf($dir) as $p) {
+                @posix_kill($p, SIGKILL);
+            }
+            @proc_terminate($proc, 9);
+            @proc_close($proc);
+        }
+    }
+
+    public function test_Chromeのクラッシュ報告やダウンロードの既定の場所は_プロファイルの中にある(): void
+    {
+        $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
+        if ($chrome === null || ! is_dir('/proc')) {
+            $this->markTestSkipped('ChromeまたはLinuxがありません');
+        }
+        $this->engine();
+        $child = proc_open([PHP_BINARY, __DIR__.'/../Support/chrome_orphan.php', $this->dir, $chrome], [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes);
+        $dir = trim((string) fgets($pipes[1]));
+        $cpid = proc_get_status($child)['pid'];
+        try {
+            $pids = $this->chromeOf($dir);
+            $this->assertNotEmpty($pids);
+            // Chrome本体（親が、起動したPHP）の、HOME と XDG が、プロファイルの中を指す。子プロセス（レンダラーなど）は、環境変数を絞って起動されるため、見ない
+            $mains = array_values(array_filter($pids, fn (int $p): bool => (\App\Support\ProcessInfo::read($p)['ppid'] ?? 0) === $cpid));
+            $this->assertNotEmpty($mains, 'Chrome本体が、見つからない');
+            foreach ($mains as $p) {
+                $vars = [];
+                foreach (explode("\0", (string) @file_get_contents("/proc/{$p}/environ")) as $kv) {
+                    [$k, $v] = array_pad(explode('=', $kv, 2), 2, '');
+                    $vars[$k] = $v;
+                }
+                $this->assertSame($dir, $vars['HOME'] ?? null, "PID {$p}: HOME");
+                $this->assertStringStartsWith($dir.'/', $vars['XDG_CONFIG_HOME'] ?? '', "PID {$p}: XDG_CONFIG_HOME");
+            }
+            // クラッシュ報告の保存先（--database=...）は、プロファイルの中。プロファイルの外（~/.config など）に、出ない
+            usleep(800000);
+            foreach (array_merge($pids, \App\Support\ProcessInfo::descendants($mains[0])) as $p) {
+                foreach (explode("\0", (string) @file_get_contents("/proc/{$p}/cmdline")) as $arg) {
+                    if (str_starts_with($arg, '--database=')) {
+                        $this->assertStringStartsWith('--database='.$dir.'/', $arg, "クラッシュ報告の保存先が、プロファイルの外: {$arg}");
+                    }
+                }
+            }
+        } finally {
+            posix_kill($cpid, SIGKILL);
+            usleep(500000);
+            Artisan::call('nlrpa:recover');
+            foreach ($this->chromeOf($dir) as $p) {
+                @posix_kill($p, SIGKILL);
+            }
+            @proc_terminate($child, 9);
+            @proc_close($child);
         }
     }
 }

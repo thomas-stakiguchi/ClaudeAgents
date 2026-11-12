@@ -42,6 +42,30 @@ class NlrpaWorker extends Command
         $result = ['status' => 'aborted', 'reasons' => ['ワーカーが異常終了しました']];
         $browser = null;
         $browserInfo = [];
+        // 終了の合図（kill、Ctrl+C、端末を閉じる）を受けたら、ブラウザを閉じてから終了する（Chromeが孤児になって、実行のロックを持ち続けないように）。
+        // 要求の状態などの後始末は、ここでは、しない（途中の書き込みを壊さない）。次に nlrpa:recover が、「処理中」→「要確認」、要求→異常終了にする
+        if (function_exists('pcntl_async_signals')) {
+            pcntl_async_signals(true);
+            $onSignal = function (int $sig) use (&$browser, $e, $pid): void {
+                try {
+                    $browser?->close();
+                } catch (\Throwable) {
+                }
+                // 閉じ方が、中途半端でも、このワーカーのプロファイルと、残ったChromeは、確実に回収する
+                try {
+                    $mine = $e->store->profiles($pid);
+                    $r = \App\Support\ProfileCleaner::clean($e->profileRoot(), array_column($mine, 'dir'));
+                    foreach ($mine as $p) {
+                        in_array($p['dir'], $r['skipped'], true) || $e->store->unregisterProfile($p['dir']);
+                    }
+                } catch (\Throwable) {
+                }
+                exit(128 + $sig);
+            };
+            foreach ([SIGTERM, SIGINT, SIGHUP] as $sig) {
+                pcntl_signal($sig, $onSignal);
+            }
+        }
         try {
             if ($req['kind'] === 'run') {
                 $run = $e->store->getRun((string) $req['run_id']) ?? throw new \RuntimeException('実行の登録がありません');

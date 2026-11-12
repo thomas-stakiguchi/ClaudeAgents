@@ -22,7 +22,27 @@ final class ApprovalChecker
         return is_string($v) && $v !== '';
     }
 
-    public function hasFinalApproval(string $planHash): bool
+    /**
+     * 最終承認（9-2：計画ハッシュとドライランIDに結び付ける）。承認の記録の dry_run_id が、指定のものと一致し、
+     * かつ、そのドライランが、今の環境で、合格していること。環境が変わった（偽の部品→本物のChromeなど）ら、古い最終承認は、使えない。
+     */
+    public function hasFinalApproval(string $planHash, string $dryRunId): bool
+    {
+        if ($dryRunId === '' || $this->findPassedDryRun($planHash, $dryRunId)['error'] !== null) {
+            return false;
+        }
+        foreach ($this->ledger->all('approval', $planHash) as $a) {
+            if (($a->stage ?? null) === 'final' && ($a->dry_run_id ?? null) === $dryRunId
+                && self::nonEmpty($a->approver ?? null) && self::nonEmpty($a->os_user ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** 画面の表示用：どのドライランでも、最終承認の記録があるか（実行できるかの判定には、使わない） */
+    public function hasAnyFinalApproval(string $planHash): bool
     {
         return $this->hasApproval($planHash, ['final']);
     }

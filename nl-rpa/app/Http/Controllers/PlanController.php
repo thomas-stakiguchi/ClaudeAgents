@@ -64,7 +64,7 @@ class PlanController extends Controller
             'steps' => PlanPresenter::steps($p['plan'], $p['inputs']),
             'aiSupplied' => PlanPresenter::aiSuppliedIrreversible($p['plan'], $p['inputs']),
             'planApproved' => $e->approvals->hasPlanApproval($hash),
-            'finalApproved' => $e->approvals->hasFinalApproval($hash),
+            'finalApproved' => $e->approvals->hasAnyFinalApproval($hash),
             'dryRuns' => array_reverse($dry),
             'passedDryRuns' => array_values(array_filter($dry, fn ($d) => ($d['result'] ?? null) === 'passed')),
             'requests' => $e->store->requestsOf($hash),
@@ -141,7 +141,7 @@ class PlanController extends Controller
         $p = $this->engine->store->getPlan($hash) ?? abort(404);
         $set = $this->engine->store->getInputSet((int) (is_string($request->query('input_set_id')) ? $request->query('input_set_id') : 0)) ?? abort(404);
         $res = $this->engine->approvals->findPassedDryRun($hash, (is_string($request->query('dry_run_id')) ? $request->query('dry_run_id') : ''));
-        if (! $this->engine->approvals->hasFinalApproval($hash) || $res['error'] !== null) {
+        if (! $this->engine->approvals->hasFinalApproval($hash, (is_string($request->query('dry_run_id')) ? $request->query('dry_run_id') : '')) || $res['error'] !== null) {
             return redirect('/plans/'.$hash)->withErrors(['final' => '最終承認と、合格したドライランが必要です']);
         }
 

@@ -15,6 +15,18 @@ class NlrpaRecover extends Command
 
     public function handle(Engine $e): int
     {
+        // 先に、動いていないワーカーが残した、Chromeとプロファイルを回収する。孤児になったChromeが、実行のロックのファイルを
+        // 開いたままだと、ロックを取れず、この後始末自体が、できなくなるため。動いているワーカーのものには、触らない
+        $dead = array_values(array_filter($e->store->profiles(), static function (array $p): bool {
+            return ! ($p['proc_start'] !== null && ProcessInfo::startTime($p['worker_pid']) === $p['proc_start'] && ProcessInfo::isAlive($p['worker_pid']));
+        }));
+        if ($dead !== []) {
+            $r0 = \App\Support\ProfileCleaner::clean($e->profileRoot(), array_column($dead, 'dir'));
+            foreach ($dead as $p) {
+                in_array($p['dir'], $r0['skipped'], true) || $e->store->unregisterProfile($p['dir']);
+            }
+            $this->info("動いていないワーカーの、Chromeのプロセス {$r0['processes']} 件・プロファイル {$r0['dirs']} 件を、回収しました");
+        }
         $lock = $e->runLock();
         if (! $lock->acquire()) {
             $this->error('別の実行が動いています。終わってから、実行してください');

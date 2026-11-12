@@ -49,7 +49,7 @@ final class Engine
         $this->states = new StepStateStore($this->db, $this->ledger, $clock);
         $this->flags = new Flags($this->db, $this->ledger);
         // 有効と認めるドライランの環境：偽の部品なら stub、本物のChromeなら chrome（1bに入ったら、スタブのドライランは、無効。9-2）
-        $this->approvals = new ApprovalChecker($this->ledger, [$this->browserMode() === 'chrome' ? 'chrome' : 'stub']);
+        $this->approvals = new ApprovalChecker($this->ledger, [$this->environmentName()]);
         $this->guard = new IrreversibleGuard($this->ledger, $this->states, $this->flags, $this->approvals);
         $this->registrar = new RunRegistrar($this->ledger, $this->approvals, $orgMaxRows);
         $this->store = new AppStore($this->db, $clock);
@@ -179,6 +179,15 @@ final class Engine
         return $m;
     }
 
+    /**
+     * 有効と認めるドライランの環境の名前。偽の部品は stub。本物のChromeは、接続先（スキーム・ホスト・ポート）を含める
+     * （接続先を変えたら、環境が変わり、古いドライランは、無効になる。9-2）。
+     */
+    public function environmentName(): string
+    {
+        return $this->browserMode() === 'chrome' ? 'chrome@'.$this->stubOrigin() : 'stub';
+    }
+
     /** スタブの画面（Web版）の、許可する接続先（アプリ自身のポートとは、別でなければならない） */
     public function stubOrigin(): string
     {
@@ -198,7 +207,11 @@ final class Engine
             return new FakeBrowser($this->stubDir.'/order_system.json', $this->guard);
         }
         $origin = $this->stubOrigin();
-        $major = array_values(array_filter(array_map(static fn (string $v): int => (int) trim($v), explode(',', (string) ($this->browser['allowed_major'] ?? ''))), static fn (int $v): bool => $v > 0));
+        $raw = trim((string) ($this->browser['allowed_major'] ?? ''));
+        if ($raw !== '' && ! preg_match('/\A[1-9][0-9]*(,[1-9][0-9]*)*\z/', $raw)) {
+            throw new \RuntimeException('NL_RPA_CHROME_MAJOR は、メジャーバージョンの数字を、カンマ区切りで指定してください（例：153,154）');
+        }
+        $major = $raw === '' ? [] : array_map('intval', explode(',', $raw));
 
         return new ChromeBrowser(
             (string) (($this->browser['binary'] ?? null) ?: ChromeBrowser::discoverBinary()),
@@ -208,7 +221,7 @@ final class Engine
             StubRegistrations::SELECTORS,
             $this->guard,
             'stub',
-            'chrome',
+            $this->environmentName(),
             (bool) ($this->browser['no_sandbox'] ?? false),
             $this->profileNotifier(),
             $major === [] ? null : $major,

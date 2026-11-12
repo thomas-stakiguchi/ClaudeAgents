@@ -89,7 +89,7 @@ final class Schema
         )');
         // 既存のDBには、列がないので、足す（プロセスの開始時刻。PIDの再利用で、別のプロセスを終了しないため）
         $cols = array_column($pdo->query('PRAGMA table_info(workers)')->fetchAll(), 'name');
-        in_array('proc_start', $cols, true) || $pdo->exec('ALTER TABLE workers ADD COLUMN proc_start TEXT');
+        in_array('proc_start', $cols, true) || self::addColumn($pdo, 'workers', 'proc_start TEXT');
 
         // ブラウザの使い捨てプロファイル（異常終了のあと、残ったプロファイルと、孤児になったChromeを、回収するための記録）
         $pdo->exec('CREATE TABLE IF NOT EXISTS browser_profiles (
@@ -99,6 +99,18 @@ final class Schema
             proc_start TEXT
         )');
         $pcols = array_column($pdo->query('PRAGMA table_info(browser_profiles)')->fetchAll(), 'name');
-        in_array('proc_start', $pcols, true) || $pdo->exec('ALTER TABLE browser_profiles ADD COLUMN proc_start TEXT');
+        in_array('proc_start', $pcols, true) || self::addColumn($pdo, 'browser_profiles', 'proc_start TEXT');
+    }
+
+    /** 列を足す。別のプロセスが、同時に足していた場合（duplicate column）は、無視する */
+    private static function addColumn(\PDO $pdo, string $table, string $definition): void
+    {
+        try {
+            $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$definition}");
+        } catch (\PDOException $e) {
+            if (! str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
     }
 }

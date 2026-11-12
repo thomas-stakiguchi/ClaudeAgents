@@ -5,6 +5,12 @@
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $log = getenv('ORDER_LOG') ?: sys_get_temp_dir().'/nlrpa_orders.log';
 header('Content-Type: text/html; charset=UTF-8');
+$attacks = getenv('NLRPA_STUB_ATTACKS') === '1';
+if (! $attacks && in_array($path, ['/webrtc', '/download', '/file.bin', '/blank', '/blob', '/trap', '/late'], true)) {
+    http_response_code(404);
+    echo 'not found';
+    exit;
+}
 switch ($path) {
     case '/login':
         echo '<html><body><h1>ログイン</h1></body></html>';
@@ -27,7 +33,7 @@ switch ($path) {
         $n = preg_match('/\AORD-[0-9]{4}\z/', $_GET['n'] ?? '') ? $_GET['n'] : '';
         echo '<html><body><p>発注番号</p><span id="order_number">'.htmlspecialchars($n).'</span></body></html>';
         break;
-    // ---- 以下は、安全性の試験用の、攻撃の画面（本番では使わない） ----
+    // ---- 以下は、安全性の試験用の、攻撃の画面。環境変数 NLRPA_STUB_ATTACKS=1 のときだけ、開ける（nlrpa:stub-web では、無効） ----
     case '/webrtc': // WebRTC（UDP）で、?stun=host:port へ送る
         echo '<html><body>webrtc<script>var q=new URLSearchParams(location.search).get("stun");try{var pc=new RTCPeerConnection({iceServers:[{urls:"stun:"+q}]});pc.createDataChannel("x");pc.createOffer().then(function(o){return pc.setLocalDescription(o);});}catch(e){}</script></body></html>';
         break;

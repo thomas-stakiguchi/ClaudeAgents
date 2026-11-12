@@ -76,7 +76,7 @@ class RunnerTest extends TestCase
 
     private function approve(string $stage): void
     {
-        $this->ledger->append('approval', PlanHasher::hash($this->plan, $this->inputs), (object) ['stage' => $stage, 'approver' => '佐藤', 'os_user' => 'tester']);
+        $this->ledger->append('approval', PlanHasher::hash($this->plan, $this->inputs), (object) (['stage' => $stage, 'approver' => '佐藤', 'os_user' => 'tester'] + ($stage === 'final' ? ['dry_run_id' => 'DR-1'] : [])));
     }
 
     /** 計画の承認 → ドライラン（合格）→ 最終承認 → 実行の登録まで */
@@ -378,7 +378,7 @@ class RunnerTest extends TestCase
             }
         };
         $hash = PlanHasher::hash($this->plan, $this->inputs);
-        $otherLedger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => 'x', 'os_user' => 'y']);
+        $otherLedger->append('approval', $hash, (object) ['stage' => 'final', 'approver' => 'x', 'os_user' => 'y', 'dry_run_id' => 'DR-1']);
         $otherLedger->append('dry_run', $hash, (object) ['dry_run_id' => 'DR-1', 'result' => 'passed', 'environment' => 'stub', 'destination_name' => 'stub']);
         $this->assertSame([], (new RunRegistrar($otherLedger, $otherApprovals))->register('RUN-1', $this->plan, $this->inputs, 'DR-1', 'stub', $this->rows));
         $o = $otherGuard->run(new \Src\Guard\GuardRequest($this->plan, $this->inputs, 'S-005', 'K-001', 'RUN-1', 'stub', $this->rows[0], ['item_code' => 'ABC', 'quantity' => '1200']), $evil);

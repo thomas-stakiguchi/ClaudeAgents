@@ -13,7 +13,7 @@ class HomeController extends Controller
         foreach ($e->store->listPlans() as $p) {
             $plans[] = $p + [
                 'plan_approved' => $e->approvals->hasPlanApproval($p['hash']),
-                'final_approved' => $e->approvals->hasFinalApproval($p['hash']),
+                'final_approved' => $e->approvals->hasAnyFinalApproval($p['hash']),
             ];
         }
 

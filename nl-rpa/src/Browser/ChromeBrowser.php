@@ -110,6 +110,8 @@ final class ChromeBrowser implements BrowserPort
                 'userDataDir' => $dir,
                 'startupTimeout' => 30,
                 'customFlags' => $this->policy->flags(),
+                // HOME・XDG をプロファイルの中へ向ける：クラッシュ報告、ダウンロードの既定の場所、設定が、使い捨てプロファイルの外（~/.config、~/Downloads）に出ない（SEC-3）
+                'envVariables' => ['HOME' => $dir, 'XDG_CONFIG_HOME' => $dir.'/xdg-config', 'XDG_CACHE_HOME' => $dir.'/xdg-cache', 'XDG_DATA_HOME' => $dir.'/xdg-data'],
             ]);
             $conn = $this->browser->getConnection();
             // バージョンの記録と確認（仕様14-2）
