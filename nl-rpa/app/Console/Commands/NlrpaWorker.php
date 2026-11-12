@@ -40,6 +40,8 @@ class NlrpaWorker extends Command
         $e->store->registerWorker($pid, $id, \App\Support\ProcessInfo::startTime($pid));
         $e->ledger->append('worker', 'request:'.$id, (object) ['event' => 'started', 'pid' => $pid, 'os_user' => Engine::osUser(), 'host' => gethostname() ?: 'unknown']);
         $result = ['status' => 'aborted', 'reasons' => ['ワーカーが異常終了しました']];
+        $browser = null;
+        $browserInfo = [];
         try {
             if ($req['kind'] === 'run') {
                 $run = $e->store->getRun((string) $req['run_id']) ?? throw new \RuntimeException('実行の登録がありません');
@@ -56,7 +58,8 @@ class NlrpaWorker extends Command
             if (! Engine::inputsAreCurrent($p['inputs'])) {
                 throw new \RuntimeException('許可リスト・個別登録が、承認のときから変わっています。計画を作り直して、再承認してください');
             }
-            $runner = $e->newRunner($e->newBrowser());
+            $browser = $e->newBrowser();
+            $runner = $e->newRunner($browser);
             $report = $req['kind'] === 'run'
                 ? $runner->run($p['plan'], $p['inputs'], (string) $req['run_id'], $rows)
                 : $runner->dryRun($p['plan'], $p['inputs'], $rows, (string) $req['dry_run_id']);
@@ -64,7 +67,20 @@ class NlrpaWorker extends Command
         } catch (\Throwable $t) {
             $result = ['status' => 'aborted', 'reasons' => ['例外: '.$t->getMessage()]];
         } finally {
-            $e->ledger->append('worker', 'request:'.$id, (object) ['event' => 'finished', 'status' => $result['status'], 'reasons' => $result['reasons'], 'pid' => $pid, 'os_user' => Engine::osUser(), 'host' => gethostname() ?: 'unknown']);
+            // ブラウザは、必ず閉じる（使い捨てプロファイルを、破棄する）。閉じる時点で、確かめていなかった異常も、記録に残す
+            if ($browser !== null) {
+                try {
+                    $browser->close();
+                } catch (\Throwable $t) {
+                    $result['reasons'][] = 'ブラウザを閉じるときにエラー: '.$t->getMessage();
+                }
+                $browserInfo = ['browser' => $browser->environmentName()];
+                if ($browser instanceof \Src\Browser\ChromeBrowser) {
+                    $browserInfo['chrome_version'] = $browser->chromeVersion();
+                    $browserInfo['unseen_at_close'] = $browser->unseenAtClose();
+                }
+            }
+            $e->ledger->append('worker', 'request:'.$id, (object) (['event' => 'finished', 'status' => $result['status'], 'reasons' => $result['reasons'], 'pid' => $pid, 'os_user' => Engine::osUser(), 'host' => gethostname() ?: 'unknown'] + $browserInfo));
             $e->store->finishRequest($id, $result);
             $e->store->unregisterWorker($pid);
         }

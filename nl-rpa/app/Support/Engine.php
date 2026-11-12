@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use Src\Browser\BrowserPort;
+use Src\Browser\ChromeBrowser;
+use Src\Browser\ChromeLaunchPolicy;
 use Src\Browser\FakeBrowser;
 use Src\Guard\ApprovalChecker;
 use Src\Guard\IrreversibleGuard;
@@ -34,7 +37,10 @@ final class Engine
     public readonly RunRegistrar $registrar;
     public readonly AppStore $store;
 
-    public function __construct(?string $dataDir, string $repoRoot, private readonly string $stubDir, int $orgMaxRows)
+    /**
+     * @param array{mode?:string, binary?:string|null, no_sandbox?:bool, allowed_major?:string|null, stub_port?:int, app_port?:int} $browser
+     */
+    public function __construct(?string $dataDir, string $repoRoot, private readonly string $stubDir, int $orgMaxRows, private readonly array $browser = [])
     {
         $this->dataDir = self::checkedDataDir($dataDir, $repoRoot);
         $clock = static fn (): string => gmdate('Y-m-d\TH:i:s\Z');
@@ -42,7 +48,8 @@ final class Engine
         $this->ledger = new Ledger($this->db, $clock);
         $this->states = new StepStateStore($this->db, $this->ledger, $clock);
         $this->flags = new Flags($this->db, $this->ledger);
-        $this->approvals = new ApprovalChecker($this->ledger);
+        // 有効と認めるドライランの環境：偽の部品なら stub、本物のChromeなら chrome（1bに入ったら、スタブのドライランは、無効。9-2）
+        $this->approvals = new ApprovalChecker($this->ledger, [$this->browserMode() === 'chrome' ? 'chrome' : 'stub']);
         $this->guard = new IrreversibleGuard($this->ledger, $this->states, $this->flags, $this->approvals);
         $this->registrar = new RunRegistrar($this->ledger, $this->approvals, $orgMaxRows);
         $this->store = new AppStore($this->db, $clock);
@@ -122,6 +129,20 @@ final class Engine
         return CanonicalJson::encode((object) $inputs) === CanonicalJson::encode((object) StubRegistrations::hashInputs());
     }
 
+    /** スタブの画面（Web版）が、発注の登録を記録するファイル */
+    public function stubOrdersLog(): string
+    {
+        return $this->dataDir.'/stub-orders.log';
+    }
+
+    /** @return list<string> スタブの画面に記録された発注（新しい順に、最大20件。画面に出す用） */
+    public function stubOrders(): array
+    {
+        $lines = @file($this->stubOrdersLog(), FILE_IGNORE_NEW_LINES) ?: [];
+
+        return array_slice(array_reverse($lines), 0, 20);
+    }
+
     /** 使い捨てのブラウザプロファイルの置き場（データの置き場の中） */
     public function profileRoot(): string
     {
@@ -148,12 +169,53 @@ final class Engine
         return new RunLock($this->dataDir.'/run.lock');
     }
 
-    public function newBrowser(): FakeBrowser
+    public function browserMode(): string
     {
-        return new FakeBrowser($this->stubDir.'/order_system.json', $this->guard);
+        $m = (string) ($this->browser['mode'] ?? 'fake');
+        if (! in_array($m, ['fake', 'chrome'], true)) {
+            throw new \RuntimeException("NL_RPA_BROWSER は、fake か chrome にしてください（{$m}）");
+        }
+
+        return $m;
     }
 
-    public function newRunner(FakeBrowser $browser): PlanRunner
+    /** スタブの画面（Web版）の、許可する接続先（アプリ自身のポートとは、別でなければならない） */
+    public function stubOrigin(): string
+    {
+        $port = (int) ($this->browser['stub_port'] ?? 8081);
+        $app = (int) ($this->browser['app_port'] ?? 8080);
+        if ($port < 1 || $port > 65535 || $port === $app) {
+            throw new \RuntimeException('NL_RPA_STUB_PORT は、1〜65535 で、アプリ自身のポートとは別にしてください（14-4）');
+        }
+
+        return 'http://localhost:'.$port;
+    }
+
+    /** ブラウザ部品を作る（設定による）。本物のChromeは、許可した接続先（スタブの画面）だけに通信できる */
+    public function newBrowser(): BrowserPort
+    {
+        if ($this->browserMode() === 'fake') {
+            return new FakeBrowser($this->stubDir.'/order_system.json', $this->guard);
+        }
+        $origin = $this->stubOrigin();
+        $major = array_values(array_filter(array_map(static fn (string $v): int => (int) trim($v), explode(',', (string) ($this->browser['allowed_major'] ?? ''))), static fn (int $v): bool => $v > 0));
+
+        return new ChromeBrowser(
+            (string) (($this->browser['binary'] ?? null) ?: ChromeBrowser::discoverBinary()),
+            $this->profileRoot(),
+            new ChromeLaunchPolicy([$origin]),
+            StubRegistrations::pageUrls($origin),
+            StubRegistrations::SELECTORS,
+            $this->guard,
+            'stub',
+            'chrome',
+            (bool) ($this->browser['no_sandbox'] ?? false),
+            $this->profileNotifier(),
+            $major === [] ? null : $major,
+        );
+    }
+
+    public function newRunner(BrowserPort $browser): PlanRunner
     {
         return new PlanRunner($this->ledger, $this->states, $this->flags, $this->guard, $this->approvals, $browser, $this->runLock());
     }

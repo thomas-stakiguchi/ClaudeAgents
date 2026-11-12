@@ -228,4 +228,27 @@ class StateTest extends TestCase
         $this->expectException(\LogicException::class);
         $this->states->markProcessing('K1', 'S-005', 'h', 'r1');
     }
+
+    public function test_複数のプロセスが同時に新しいデータベースを開いても失敗しない(): void
+    {
+        $failures = [];
+        for ($round = 0; $round < 5; $round++) {
+            $path = sys_get_temp_dir().'/nlrpa_dbopen_'.bin2hex(random_bytes(4)).'.sqlite';
+            $procs = [];
+            for ($i = 0; $i < 6; $i++) {
+                $procs[] = [proc_open([PHP_BINARY, dirname(__DIR__).'/Support/db_open.php', $path], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes), $pipes];
+            }
+            foreach ($procs as [$p, $pipes]) {
+                $out = stream_get_contents($pipes[1]).stream_get_contents($pipes[2]);
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                proc_close($p);
+                $out === 'OK' || $failures[] = $out;
+            }
+            foreach (glob($path.'*') ?: [] as $f) {
+                @unlink($f);
+            }
+        }
+        $this->assertSame([], $failures);
+    }
 }

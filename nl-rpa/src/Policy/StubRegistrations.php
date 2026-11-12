@@ -14,6 +14,18 @@ namespace Src\Policy;
  */
 final class StubRegistrations
 {
+    /** 画面の記録（本物のブラウザ用）：画面名 => パス。接続先（スキーム・ホスト・ポート）は、設定で決める（計画ハッシュには、パスだけが入る） */
+    public const PAGES = ['start' => '/login', 'login_page' => '/login', 'order_page' => '/order', 'done_page' => '/done'];
+
+    /** 画面の記録（本物のブラウザ用）：要素名 => CSSセレクタ */
+    public const SELECTORS = ['item_code' => '#item_code', 'quantity' => '#quantity', 'submit_button' => '#submit_button', 'order_number' => '#order_number'];
+
+    /** @return array<string,string> 画面名 => URL */
+    public static function pageUrls(string $origin): array
+    {
+        return array_map(static fn (string $path): string => rtrim($origin, '/').$path, self::PAGES);
+    }
+
     /** @return array<string,mixed> PlanHasher::REQUIRED_INPUTS をすべて含む */
     public static function hashInputs(): array
     {
@@ -30,7 +42,7 @@ final class StubRegistrations
                     (object) ['destination' => 'stub', 'target' => 'order_page'],
                 ],
             ],
-            'screen_record' => (object) ['version' => 1, 'elements' => (object) ['login_page' => 'page', 'order_page' => 'page', 'done_page' => 'page', 'item_code' => 'input', 'quantity' => 'input', 'submit_button' => 'button', 'order_number' => 'text']],
+            'screen_record' => (object) ['version' => 2, 'pages' => (object) self::PAGES, 'selectors' => (object) self::SELECTORS, 'elements' => (object) ['login_page' => 'page', 'order_page' => 'page', 'done_page' => 'page', 'item_code' => 'input', 'quantity' => 'input', 'submit_button' => 'button', 'order_number' => 'text']],
         ];
     }
 

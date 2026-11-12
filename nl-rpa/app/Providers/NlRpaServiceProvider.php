@@ -16,6 +16,14 @@ class NlRpaServiceProvider extends ServiceProvider
             base_path(),
             config('nlrpa.stub_dir'),
             (int) config('nlrpa.org_max_rows'),
+            [
+                'mode' => config('nlrpa.browser'),
+                'binary' => config('nlrpa.chrome_binary'),
+                'no_sandbox' => (bool) config('nlrpa.chrome_no_sandbox'),
+                'allowed_major' => config('nlrpa.chrome_allowed_major'),
+                'stub_port' => (int) config('nlrpa.stub_port'),
+                'app_port' => (int) config('nlrpa.port'),
+            ],
         ));
         $this->app->singleton(AccessToken::class, fn ($app) => new AccessToken($app->make(Engine::class)->dataDir));
     }

@@ -73,6 +73,12 @@ final class ChromeBrowser implements BrowserPort
         }
     }
 
+    /** Chromeの実行ファイルを探す（chrome-php の自動検出）。見つからなければ、例外 */
+    public static function discoverBinary(): string
+    {
+        return (new \HeadlessChromium\AutoDiscover())->guessChromeBinaryPath();
+    }
+
     public function destinationName(): string
     {
         return $this->destination;

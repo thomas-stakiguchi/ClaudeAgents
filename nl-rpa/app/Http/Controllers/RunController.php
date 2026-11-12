@@ -43,6 +43,8 @@ class RunController extends Controller
         return view('runs.show', $d + [
             'table' => $table,
             'requests' => $requests,
+            'browserMode' => $e->browserMode(),
+            'stubOrders' => $e->stubOrders(),
             'firstConfirmed' => $e->ledger->latest('first_row_confirmed', $runId) !== null,
             'rec' => $e->ledger->latest('run', $runId),
         ]);

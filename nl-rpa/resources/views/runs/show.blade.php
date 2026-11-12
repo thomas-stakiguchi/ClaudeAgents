@@ -52,6 +52,14 @@
   @else <p><span class="badge good">初回の1件は確認済みです</span></p> @endif
 </div>
 
+@if ($browserMode === 'chrome')
+<h2>スタブの画面に記録された発注（新しい順）</h2>
+<div class="card">
+  <p><small>本物のChromeが、スタブの発注画面に登録した内容です（商品コード|数量）。件数が、行ごとの状態と合っているかを、見比べてください。</small></p>
+  @if (count($stubOrders) === 0) <p>まだありません。</p> @else <ul>@foreach ($stubOrders as $o)<li>{{ $o }}</li>@endforeach</ul> @endif
+</div>
+@endif
+
 @if (count($requests) > 0)
 <h2>実行の結果</h2>
 @php($lastRows = null)

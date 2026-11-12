@@ -22,6 +22,7 @@ class WebTest extends TestCase
 
     protected function tearDown(): void
     {
+        $this->stopStub();
         $this->rm($this->dir);
         parent::tearDown();
     }
@@ -782,6 +783,147 @@ class WebTest extends TestCase
             }
             @proc_terminate($child, 9);
             @proc_close($child);
+        }
+    }
+
+    // ---- 本物のChromeを、ワーカーにつないだ、画面からの通しの流れ ----
+
+    /** @return array{0:string,1:int} Chromeのパス、スタブの画面のポート。スタブの画面（Web版）も起動する */
+    private function useChrome(): array
+    {
+        $chrome = getenv('NL_RPA_CHROME') ?: (glob('/opt/pw-browsers/chromium-*/chrome-linux64/chrome')[0] ?? null);
+        if ($chrome === null || ! is_file($chrome)) {
+            $this->markTestSkipped('Chromeが見つかりません');
+        }
+        $s = stream_socket_server('tcp://127.0.0.1:0');
+        $port = (int) explode(':', stream_socket_get_name($s, false))[1];
+        fclose($s);
+        config(['nlrpa.browser' => 'chrome', 'nlrpa.chrome_binary' => $chrome, 'nlrpa.chrome_no_sandbox' => true, 'nlrpa.stub_port' => $port]);
+        $this->engine(); // データの置き場を作る
+        $proc = proc_open([PHP_BINARY, '-S', "127.0.0.1:{$port}", base_path('stubs/web/router.php')], [0 => ['file', '/dev/null', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']], $p, base_path('stubs/web'), array_merge(getenv(), ['ORDER_LOG' => $this->engine()->stubOrdersLog()]));
+        $this->stubProc = $proc;
+        for ($i = 0; $i < 50 && ! @fsockopen('127.0.0.1', $port); $i++) {
+            usleep(100000);
+        }
+
+        return [$chrome, $port];
+    }
+
+    /** @var resource|null */
+    private $stubProc = null;
+
+    protected function stopStub(): void
+    {
+        if ($this->stubProc !== null) {
+            @proc_terminate($this->stubProc);
+            @proc_close($this->stubProc);
+            $this->stubProc = null;
+        }
+    }
+
+    public function test_画面から本物のChromeまで_計画の承認から本番実行を通しで動かす(): void
+    {
+        $this->useChrome();
+        try {
+            $this->login();
+            $hash = $this->createPlan();
+            $this->post2("/plans/{$hash}/approve-plan")->assertSessionHasNoErrors();
+            $this->post2("/plans/{$hash}/dry-run")->assertSessionHasNoErrors();
+            $dryReq = $this->lastRequestId();
+            $this->assertStringContainsString('completed', $this->worker($dryReq));
+            $this->assertFileDoesNotExist($this->engine()->stubOrdersLog(), 'ドライランでは、取り消せない操作を実行しない');
+            $dryRunId = $this->engine()->store->getRequest($dryReq)['dry_run_id'];
+            // ドライランの環境は、本物のChrome（chrome）として記録される。バージョンも、記録に残る
+            $dry = $this->engine()->ledger->all('dry_run', $hash)[0];
+            $this->assertSame('chrome', $dry->environment);
+            $w = array_values(array_filter($this->engine()->ledger->all('worker', 'request:'.$dryReq), fn ($x) => $x->event === 'finished'))[0];
+            $this->assertSame('chrome', $w->browser);
+            $this->assertMatchesRegularExpression('#Chrome/\d+\.#', (string) $w->chrome_version);
+
+            $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $dryRunId])->assertSessionHasNoErrors();
+            $input = $this->csv();
+            $r = $this->post2("/plans/{$hash}/register", ['input_set_id' => $input, 'dry_run_id' => $dryRunId, 'count' => '3']);
+            preg_match('#/runs/(RUN-[0-9]{8}-[0-9]{6}-[0-9a-f]{6})$#', (string) $r->headers->get('Location'), $m);
+            $runId = $m[1] ?? $this->fail('登録できなかった');
+
+            $this->post2("/runs/{$runId}/start")->assertSessionHasNoErrors();
+            $this->assertStringContainsString('awaiting_first_row_confirmation', $this->worker($this->lastRequestId()));
+            $this->assertSame(['ABC|1200'], array_map('trim', file($this->engine()->stubOrdersLog())), '初回は1件だけ');
+            $this->get($this->base."/runs/{$runId}")->assertOk()->assertSee('スタブの画面に記録された発注')->assertSee('ABC|1200');
+
+            $this->post2("/runs/{$runId}/confirm-first")->assertSessionHasNoErrors();
+            $this->post2("/runs/{$runId}/start")->assertSessionHasNoErrors();
+            $this->assertStringContainsString('completed', $this->worker($this->lastRequestId()));
+            $this->assertSame(['ABC|1200', 'DEF|30', 'GHI|5'], array_map('trim', file($this->engine()->stubOrdersLog())));
+            foreach (['K-001', 'K-002', 'K-003'] as $k) {
+                $this->assertSame('succeeded', $this->engine()->states->get($k, 'S-005'));
+            }
+            // 使い捨てプロファイルは、すべて破棄され、記録も残っていない。Chromeも残っていない
+            $this->assertSame([], glob($this->engine()->profileRoot().'/profile-*') ?: []);
+            $this->assertSame([], $this->engine()->store->profiles());
+            $this->assertNull($this->engine()->ledger->verify());
+        } finally {
+            $this->stopStub();
+        }
+    }
+
+    public function test_偽の部品のドライランは_本物のChromeに切り替えたら無効になる(): void
+    {
+        // まず、偽の部品（stub）で、ドライランを合格させる
+        $this->login();
+        $hash = $this->createPlan();
+        $this->post2("/plans/{$hash}/approve-plan");
+        $this->post2("/plans/{$hash}/dry-run");
+        $req = $this->lastRequestId();
+        $this->worker($req);
+        $dryRunId = $this->engine()->store->getRequest($req)['dry_run_id'];
+        $this->assertSame('stub', $this->engine()->ledger->all('dry_run', $hash)[0]->environment);
+        // 本物のChromeに切り替える（新しい Engine を、同じデータの置き場で作る）
+        $this->app->forgetInstance(Engine::class);
+        $this->app->forgetInstance(AccessToken::class);
+        config(['nlrpa.browser' => 'chrome']);
+        $this->engine();
+        $res = $this->engine()->approvals->findPassedDryRun($hash, $dryRunId);
+        $this->assertNotNull($res['error'], '偽の部品のドライランが、本物のChromeの実行で、有効のまま');
+        $this->assertStringContainsString('環境', $res['error']);
+        // 最終承認も、できない
+        $this->login();
+        $this->post2("/plans/{$hash}/approve-final", ['dry_run_id' => $dryRunId])->assertSessionHasErrors('final');
+    }
+
+    public function test_スタブの画面のポートがアプリ自身と同じなら_ワーカーは起動せず理由を記録する(): void
+    {
+        config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => 8080]); // アプリ自身のポート（nlrpa.port = 8080）
+        $this->login();
+        $hash = $this->createPlan();
+        $this->post2("/plans/{$hash}/approve-plan");
+        $this->post2("/plans/{$hash}/dry-run");
+        $out = $this->worker($this->lastRequestId());
+        $this->assertStringContainsString('aborted', $out);
+        $this->assertStringContainsString('アプリ自身のポート', $out);
+        $this->assertSame([], $this->engine()->ledger->all('dry_run', $hash), '起動できないのに、ドライランの記録ができた');
+    }
+
+    public function test_ブラウザの設定が不正なら_最初の時点で止まる(): void
+    {
+        config(['nlrpa.browser' => 'firefox']);
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('fake か chrome');
+        $this->engine();
+    }
+
+    public function test_スタブの画面のポートが不正なら拒否する(): void
+    {
+        foreach ([0, 70000, 8080] as $bad) {
+            config(['nlrpa.browser' => 'chrome', 'nlrpa.stub_port' => $bad]);
+            $this->app->forgetInstance(Engine::class);
+            $thrown = false;
+            try {
+                $this->engine()->stubOrigin();
+            } catch (\RuntimeException) {
+                $thrown = true;
+            }
+            $this->assertTrue($thrown, (string) $bad);
         }
     }
 }
