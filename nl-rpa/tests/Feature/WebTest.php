@@ -173,6 +173,9 @@ class WebTest extends TestCase
             $this->assertSame('DENY', $r->headers->get('X-Frame-Options'));
             $this->assertNull($r->headers->get('Access-Control-Allow-Origin'));
             $this->assertStringContainsString('no-store', $r->headers->get('Cache-Control'));
+            // no-referrer だと、本物のブラウザは、同じサイトへの送信でも「Origin: null」を送り、Originの検査で、すべての送信が拒否される。
+            // same-origin なら、同じサイトへの送信には正しいOriginが付き、ほかのサイトには、リファラを送らない（デモで発見）
+            $this->assertSame('same-origin', $r->headers->get('Referrer-Policy'));
         }
     }
 

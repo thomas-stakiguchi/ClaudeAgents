@@ -18,7 +18,7 @@ class SecurityHeaders
         $response->headers->set('Content-Security-Policy', "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
         $response->headers->set('X-Frame-Options', 'DENY');
         $response->headers->set('X-Content-Type-Options', 'nosniff');
-        $response->headers->set('Referrer-Policy', 'no-referrer');
+        $response->headers->set('Referrer-Policy', 'same-origin');
         $response->headers->set('Cache-Control', 'no-store');
         $response->headers->remove('Access-Control-Allow-Origin');
         $response->headers->remove('X-Powered-By');
