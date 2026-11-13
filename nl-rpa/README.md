@@ -20,9 +20,56 @@
 - 専用のOSアカウントで動かすこと（SEC-10）
 - ネットワーク側の通信制限（SEC-6）。いまの通信の制限は、Chrome自身の設定（起動オプション）だけです
 
+## Windows で動かす（管理者権限なし。偽の部品だけ）
+
+Windows（PowerShell）で、管理者権限なしに、動かせるように作ってあります。**ただし、Windowsでの動作は、まだ確かめていません**（開発は Linux）。詰まったら、出たメッセージを、そのまま教えてください。
+
+- 動かせるのは、**偽の部品（`NL_RPA_BROWSER=fake`、既定）だけ**です。Windowsで `chrome` にすると、起動時にエラーになります（残ったChromeの回収が、未対応のため）
+- 緊急停止（`nlrpa:emergency-stop`）は、`taskkill` で、記録したワーカーを、子孫ごと終了します。PowerShell が使えないときは、終了せず、手で終了するよう案内します
+- 記録のファイルの権限（0600）は、Windowsにはありません。データの置き場は、自分のユーザーのフォルダ（`C:\Users\あなた\...`）の下に置いてください
+
+**1. PHP を入れる（インストーラー不要）**
+
+1. https://windows.php.net/download/ から、**PHP 8.3 の「Non Thread Safe」「x64」の zip** をダウンロードする
+2. `C:\Users\あなた\php` のような、自分のフォルダに展開する
+3. その中の `php.ini-development` を `php.ini` にコピーし、次の行の、先頭の `;` を消す：`extension=curl`、`extension=fileinfo`、`extension=intl`、`extension=mbstring`、`extension=openssl`、`extension=pdo_sqlite`、`extension=sqlite3`、`extension=zip`。`extension_dir = "ext"` の `;` も消す
+4. PowerShell を開き、今回だけ PATH に加える（管理者権限は不要）：`$env:Path = "C:\Users\あなた\php;" + $env:Path`
+5. `php -v` で、8.3 と出れば、成功
+
+**2. このアプリを取得する**
+
+GitHub の画面から、ブランチ `claude/relaxed-heisenberg-mfbbla` の zip をダウンロードして展開し、その中の `nl-rpa` フォルダへ移動します（git が使えるなら、`git clone` でも構いません）。
+
+**3. Composer を入れる（インストーラー不要。`nl-rpa` フォルダの中で実行）**
+
+```powershell
+php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+php composer-setup.php
+del composer-setup.php
+```
+
+`composer.phar` ができます。以降は、`composer` の代わりに `php composer.phar` と打ちます。
+
+
+**4. 準備と起動**
+
+```powershell
+php composer.phar install --no-dev
+copy .env.example .env
+php artisan key:generate
+```
+
+`.env` を、メモ帳で開き、`NL_RPA_DATA_DIR=C:\Users\あなた\nlrpa-data` のように、**リポジトリの外**の、絶対パスを書きます。
+
+```powershell
+php artisan nlrpa:serve
+```
+
+ブラウザで `http://localhost:8080` を開き、画面に出たアクセストークンを入力します。使い方は、下の「使い方」のとおりです。ワーカーは、別の PowerShell を開いて、`php artisan nlrpa:worker 1`（番号は、要求の番号）で動かします。
+
 ## 準備
 
-必要なもの：PHP（拡張：`pdo_sqlite`、`mbstring`、`intl`、`posix`）、Composer。
+必要なもの：PHP（拡張：`pdo_sqlite`、`mbstring`、`intl`、`posix`。`posix` は、Linux・Macのみ。Windowsは、上の「Windows で動かす」を見てください）、Composer。
 
 ```bash
 composer install

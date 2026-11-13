@@ -19,7 +19,7 @@ if (($dataDir === false || $dataDir === '') && class_exists(\Dotenv\Dotenv::clas
 $storage = null;
 $repoRoot = realpath(dirname(__DIR__)) ?: dirname(__DIR__);
 // 「リポジトリの外か」は、「//」「..」やシンボリックリンクを整理してから判定する（Engine::checkedDataDir と同じ関数）
-if (is_string($dataDir) && $dataDir !== '' && str_starts_with($dataDir, '/') && \App\Support\Engine::resolvePath($dataDir) !== null && ! \App\Support\Engine::isInside($dataDir, $repoRoot)) {
+if (is_string($dataDir) && $dataDir !== '' && \App\Support\Engine::resolvePath($dataDir) !== null && ! \App\Support\Engine::isInside($dataDir, $repoRoot)) {
     $storage = rtrim($dataDir, '/\\').'/storage';
     foreach (['framework/sessions', 'framework/views', 'framework/cache/data', 'logs'] as $sub) {
         @mkdir($storage.'/'.$sub, 0700, true);

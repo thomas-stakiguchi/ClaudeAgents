@@ -61,11 +61,16 @@ final class Engine
      */
     public static function resolvePath(string $path): ?string
     {
-        if ($path === '' || $path[0] !== '/') {
+        // Windowsの絶対パス（C:\dir や C:/dir）。ドライブ文字を大文字にそろえ、区切りを / にする。UNC（\\server\share）は、未対応（null）
+        $drive = '';
+        if (preg_match('#\A([A-Za-z]):[\\\\/]#', $path, $m) === 1) {
+            $drive = strtoupper($m[1]).':';
+            $path = substr($path, 2);
+        } elseif ($path === '' || $path[0] !== '/') {
             return null;
         }
         $parts = [];
-        foreach (explode('/', $path) as $seg) {
+        foreach (preg_split($drive !== '' ? '#[\\\\/]#' : '#/#', $path) ?: [] as $seg) {
             if ($seg === '' || $seg === '.') {
                 continue;
             }
@@ -78,29 +83,46 @@ final class Engine
         // 存在する一番深い親を、実体のパスにする。存在しない部分は、元の順で、後ろに付ける
         $rest = [];
         while ($parts !== []) {
-            $real = @realpath('/'.implode('/', $parts));
+            $real = @realpath($drive.'/'.implode('/', $parts));
             if ($real !== false) {
+                $real = $drive !== '' ? self::normalizeWindows($real) : $real;
+
                 return rtrim($real, '/').($rest === [] ? '' : '/'.implode('/', $rest));
             }
             array_unshift($rest, array_pop($parts));
         }
 
-        return '/'.implode('/', $rest);
+        return $drive.'/'.implode('/', $rest);
     }
 
-    /** $path が、$dir の中（または同じ）か。どちらも resolvePath を通した値で比べる */
+    /** Windowsの realpath の結果（C:\a\b）を、C:/a/b にそろえる（ドライブ文字は大文字） */
+    private static function normalizeWindows(string $p): string
+    {
+        $p = str_replace('\\', '/', $p);
+
+        return preg_match('#\A[a-z]:#', $p) === 1 ? strtoupper($p[0]).substr($p, 1) : $p;
+    }
+
+    /** $path が、$dir の中（または同じ）か。どちらも resolvePath を通した値で比べる（Windowsのパスは、大文字小文字を区別しない） */
     public static function isInside(string $path, string $dir): bool
     {
         $p = self::resolvePath($path);
         $d = self::resolvePath($dir);
+        if ($p === null || $d === null) {
+            return false;
+        }
+        if (preg_match('#\A[A-Z]:#', $p) === 1) {
+            $p = strtolower($p);
+            $d = strtolower($d);
+        }
 
-        return $p !== null && $d !== null && ($p === $d || str_starts_with($p.'/', rtrim($d, '/').'/'));
+        return $p === $d || str_starts_with($p.'/', rtrim($d, '/').'/');
     }
 
     /** データの置き場を検査して、作る（なければ）。リポジトリの中や、相対パスは拒否（LOC-4）。作る前に、判定する */
     public static function checkedDataDir(?string $dir, string $repoRoot): string
     {
-        if ($dir === null || $dir === '' || ! str_starts_with($dir, '/') || self::resolvePath($dir) === null) {
+        if ($dir === null || $dir === '' || self::resolvePath($dir) === null) {
             throw new \RuntimeException('NL_RPA_DATA_DIR に、リポジトリの外の絶対パスを指定してください');
         }
         if (self::isInside($dir, $repoRoot)) {
@@ -174,6 +196,11 @@ final class Engine
         $m = (string) ($this->browser['mode'] ?? 'fake');
         if (! in_array($m, ['fake', 'chrome'], true)) {
             throw new \RuntimeException("NL_RPA_BROWSER は、fake か chrome にしてください（{$m}）");
+        }
+
+        if ($m === 'chrome' && PHP_OS_FAMILY === 'Windows') {
+            // Windowsでは、残ったChromeの回収・緊急停止が、未対応（確かめられていない）。回収できないまま、本物のChromeを動かさない
+            throw new \RuntimeException('Windowsでは、本物のChromeでの実行は、まだ未対応です。NL_RPA_BROWSER=fake にしてください');
         }
 
         return $m;

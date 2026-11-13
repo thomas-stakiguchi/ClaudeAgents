@@ -26,3 +26,4 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 tools/verify-network/result.json
+/composer.phar

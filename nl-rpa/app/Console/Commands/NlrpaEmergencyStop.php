@@ -27,6 +27,9 @@ class NlrpaEmergencyStop extends Command
         $by = 'console ('.Engine::osUser().')';
         $e->flags->set(Flags::KILL_SWITCH, true, $by);
         $this->warn('キルスイッチを立てました（解除は nlrpa:kill-switch off）');
+        if (ProcessInfo::isWindows()) {
+            return $this->stopWindows($e);
+        }
         if (! is_dir('/proc') || ! function_exists('posix_kill')) {
             $this->error('このOSでは、プロセスの終了は未対応です。ワーカーを、手で終了してください');
 
@@ -89,4 +92,49 @@ class NlrpaEmergencyStop extends Command
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
+
+    /**
+     * Windows。記録したワーカーのうち、PIDと開始時刻が一致するものだけを、子孫ごと終了する（taskkill /T /F）。
+     * 開始時刻を読めない（PowerShellが使えない）ときは、終了せず、手で終了するよう案内する（別のプロセスを終了しないため）。
+     * Windowsでは、本物のChromeでの実行は未対応のため、プロファイルの回収はしない。
+     */
+    private function stopWindows(Engine $e): int
+    {
+        $killed = 0;
+        $failed = 0;
+        foreach ($e->store->workers() as $w) {
+            $pid = (int) $w['pid'];
+            if (! ProcessInfo::aliveWindows($pid)) {
+                $this->line("PID {$pid}：すでに終了しています（飛ばします）");
+                $e->store->unregisterWorker($pid);
+                continue;
+            }
+            $now = ProcessInfo::startTime($pid);
+            if ($now === null || $w['proc_start'] === null) {
+                $failed++;
+                $this->error("PID {$pid}：開始時刻を確認できないため、終了しません。タスクマネージャーで、このワーカー（php.exe）を、手で終了してください");
+                continue;
+            }
+            if ($now !== $w['proc_start']) {
+                $this->line("PID {$pid}：記録したワーカーとは別のプロセスです（飛ばします）");
+                $e->store->unregisterWorker($pid);
+                continue;
+            }
+            if (ProcessInfo::killTreeWindows($pid)) {
+                $killed++;
+                $e->store->unregisterWorker($pid);
+                $this->line("PID {$pid} と子孫のプロセスを終了しました");
+            } else {
+                $failed++;
+                $this->error("PID {$pid} を終了できませんでした。タスクマネージャーで、手で終了してください");
+            }
+        }
+        if ($failed > 0) {
+            $this->error("終了できなかったプロセスが {$failed} 件あります");
+        }
+        $this->info("終了したワーカー：{$killed}件。次に php artisan nlrpa:recover で後始末をしてください");
+
+        return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    }
 }
+

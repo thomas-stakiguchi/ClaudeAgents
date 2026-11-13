@@ -27,6 +27,7 @@ class StateTest extends TestCase
 
     public function test_記録のファイルは所有者だけが読み書きできる(): void
     {
+        PHP_OS_FAMILY === 'Windows' && $this->markTestSkipped('Windowsには、0600の権限がない（フォルダのアクセス権で守る）');
         $dir = sys_get_temp_dir().'/nlrpa_perm_'.bin2hex(random_bytes(4));
         mkdir($dir, 0700);
         $path = $dir.'/x.sqlite';
